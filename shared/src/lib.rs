@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
-const SCOREBOARD_LENGTH: usize = 10;
+pub const SCOREBOARD_LENGTH: usize = 10;
 
 /// Unique number per client for tracking the order of packets
 pub type SequenceNumber = u64;
@@ -11,8 +11,8 @@ pub type BulletId = u64;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Vec2 {
-    x: f32,
-    y: f32,
+    pub x: f32,
+    pub y: f32,
 }
 
 impl Vec2 {
@@ -42,14 +42,15 @@ pub enum LifeState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlayerState {
-    id: PlayerId,
-    name: String,
-    position: Vec2,
-    velocity: Vec2,
-    health: i32,
-    max_health: i32,
-    score: u64,
-    life: LifeState,
+    pub id: PlayerId,
+    pub name: String,
+    pub position: Vec2,
+    pub velocity: Vec2,
+    pub health: i32,
+    pub max_health: i32,
+    pub score: u64,
+    pub life: LifeState,
+    pub last_processed_input: SequenceNumber, // For clearing input queue on client side
 }
 
 impl PlayerState {
@@ -63,49 +64,27 @@ impl PlayerState {
             max_health,
             score: 0,
             life: LifeState::Alive,
+            last_processed_input: 0,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BulletState {
-    id: BulletId,
-    owner_id: PlayerId,
-    position: Vec2,
-    velocity: Vec2,
-    damage: i32,
+    pub id: BulletId,
+    pub owner_id: PlayerId,
+    pub position: Vec2,
+    pub velocity: Vec2,
+    pub damage: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientInput {
-    tick: TickNumber,         // Client's predicted tick
-    sequence: SequenceNumber, // Monotonic input sequence number
+    pub tick: TickNumber,         // Client's predicted tick
+    pub sequence: SequenceNumber, // Monotonic input sequence number
 
-    move_direction: Vec2,
-    shoot: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct ClientConnection {
-    player_id: PlayerId,
-    last_heard: Instant,
-    last_snapshot_sent: Instant,
-    last_acknowledged_tick: TickNumber,
-    latency: Duration, // Estimated round-trip time
-}
-
-impl ClientConnection {
-    pub fn new(player_id: PlayerId, current_tick: TickNumber) -> Self {
-        let instant_now = Instant::now();
-
-        Self {
-            player_id,
-            last_heard: instant_now,
-            last_snapshot_sent: instant_now,
-            last_acknowledged_tick: current_tick,
-            latency: Duration::ZERO,
-        }
-    }
+    pub move_direction: Vec2,
+    pub shoot: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -113,7 +92,6 @@ pub enum ClientPacket {
     Connect { player_name: String },
     Disconnect,
     Input(ClientInput),
-    AcknowledgeSnapshot { tick: TickNumber },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,30 +105,30 @@ pub enum ServerPacket {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScoreEntry {
-    player_id: PlayerId,
-    score: u64,
+    pub player_id: PlayerId,
+    pub score: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
-    tick: TickNumber,
+    pub tick: TickNumber,
 
-    players: Vec<PlayerState>,
-    bullets: Vec<BulletState>,
-    scoreboard: [ScoreEntry; SCOREBOARD_LENGTH],
+    pub players: Vec<PlayerState>,
+    pub bullets: Vec<BulletState>,
+    pub scoreboard: [ScoreEntry; SCOREBOARD_LENGTH],
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeltaSnapshot {
-    tick: TickNumber,
-    base_tick: TickNumber, // Last acknowledged snapshot
+    pub tick: TickNumber,
+    pub base_tick: TickNumber, // Last acknowledged snapshot
 
-    added_players: Vec<PlayerState>,
-    removed_players: Vec<PlayerId>,
-    updated_players: Vec<PlayerState>,
+    pub added_players: Vec<PlayerState>,
+    pub removed_players: Vec<PlayerId>,
+    pub updated_players: Vec<PlayerState>,
 
-    added_bullets: Vec<BulletState>,
-    removed_bullets: Vec<BulletId>,
+    pub added_bullets: Vec<BulletState>,
+    pub removed_bullets: Vec<BulletId>,
 
-    scoreboard: Option<[ScoreEntry; SCOREBOARD_LENGTH]>,
+    pub scoreboard: Option<[ScoreEntry; SCOREBOARD_LENGTH]>,
 }
