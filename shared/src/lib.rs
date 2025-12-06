@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
+pub const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub const SCOREBOARD_LENGTH: usize = 10;
 
 /// Unique number per client for tracking the order of packets
@@ -24,7 +26,7 @@ impl Vec2 {
         (self.x * self.x + self.y * self.y).sqrt()
     }
 
-    pub fn normalize(self) -> Self {
+    pub fn normalized(self) -> Self {
         let len = self.length();
         Self {
             x: self.x / len,
@@ -54,7 +56,7 @@ pub struct PlayerState {
 }
 
 impl PlayerState {
-    fn new(id: PlayerId, name: String, spawn_pos: Vec2, max_health: i32) -> Self {
+    pub fn new(id: PlayerId, name: String, spawn_pos: Vec2, max_health: i32) -> Self {
         Self {
             id,
             name,
@@ -75,13 +77,14 @@ pub struct BulletState {
     pub owner_id: PlayerId,
     pub position: Vec2,
     pub velocity: Vec2,
+    pub spawn_tick: TickNumber,
     pub damage: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientInput {
-    pub tick: TickNumber,         // Client's predicted tick
-    pub sequence: SequenceNumber, // Monotonic input sequence number
+    pub predicted_tick: TickNumber, // Client's predicted tick
+    pub sequence: SequenceNumber,   // Monotonic input sequence number
 
     pub move_direction: Vec2,
     pub shoot: bool,
@@ -96,17 +99,56 @@ pub enum ClientPacket {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerPacket {
-    ConnectionAccepted { player_id: PlayerId },
-    ConnectionRejected { reason: String },
-    Disconnect { reason: String },
+    ConnectionAccepted {
+        player_id: PlayerId,
+        full_snapshot: Snapshot,
+    },
+    ConnectionRejected {
+        reason: String,
+    },
+    Disconnect {
+        reason: String,
+    },
     FullSnapshot(Snapshot),
     DeltaSnapshot(DeltaSnapshot),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
+pub struct ClientConnection {
+    pub player_id: PlayerId,
+    pub last_heard: Instant,
+    pub latency: Duration, // Estimated round-trip time
+}
+
+impl ClientConnection {
+    pub fn new(player_id: PlayerId) -> Self {
+        Self {
+            player_id,
+            last_heard: Instant::now(),
+            latency: Duration::from_millis(50), // Initial estimate
+        }
+    }
+
+    pub fn is_timed_out(&self) -> bool {
+        self.last_heard.elapsed() > CLIENT_TIMEOUT
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScoreEntry {
     pub player_id: PlayerId,
     pub score: u64,
+}
+
+impl Ord for ScoreEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.score.cmp(&other.score)
+    }
+}
+
+impl PartialOrd for ScoreEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.score.partial_cmp(&other.score)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

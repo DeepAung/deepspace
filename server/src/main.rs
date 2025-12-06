@@ -17,6 +17,7 @@ async fn main() -> io::Result<()> {
     let bincode_cfg = bincode::config::standard();
 
     // Game tick loop
+    let game_socket = Arc::clone(&socket);
     let game_tick_state = Arc::clone(&game_state);
     tokio::spawn(async move {
         let mut ticker = time::interval(TICK_DURATION);
@@ -25,7 +26,20 @@ async fn main() -> io::Result<()> {
             ticker.tick().await;
 
             let mut game = game_tick_state.lock().await;
-            game.tick(TICK_DURATION.as_secs_f32());
+            let disconnected_clients = game.tick(TICK_DURATION.as_secs_f32());
+
+            if disconnected_clients.is_empty() {
+                continue;
+            }
+
+            let packet = ServerPacket::Disconnect {
+                reason: "Client timed out".to_string(),
+            };
+            let packet_encoded = bincode::serde::encode_to_vec(packet, bincode_cfg).unwrap();
+
+            for addr in disconnected_clients {
+                game_socket.send_to(&packet_encoded, addr).await.unwrap();
+            }
         }
     });
 
@@ -82,10 +96,23 @@ async fn main() -> io::Result<()> {
 
                 match packet {
                     ClientPacket::Connect { player_name } => {
-                        game.handle_connect(addr, player_name);
+                        let packet = game.handle_connect(addr, player_name);
+
+                        let packet_encoded =
+                            bincode::serde::encode_to_vec(packet, bincode_cfg).unwrap();
+
+                        socket.send_to(&packet_encoded, addr).await.unwrap();
                     }
                     ClientPacket::Disconnect => {
                         game.handle_disconnect(addr);
+                        let packet = ServerPacket::Disconnect {
+                            reason: "Client request disconnect".to_string(),
+                        };
+
+                        let packet_encoded =
+                            bincode::serde::encode_to_vec(packet, bincode_cfg).unwrap();
+
+                        socket.send_to(&packet_encoded, addr).await.unwrap();
                     }
                     ClientPacket::Input(client_input) => {
                         game.queue_input(addr, client_input);
