@@ -1,6 +1,6 @@
 use std::{
     cmp::Reverse,
-    collections::{BinaryHeap, HashMap},
+    collections::{BinaryHeap, HashMap, hash_map::Entry},
     net::SocketAddr,
     time::{Duration, Instant},
 };
@@ -78,7 +78,7 @@ impl GameServer {
             };
         }
 
-        if let None = self.clients.get(&addr) {
+        if let Entry::Occupied(_) = self.clients.entry(addr) {
             return ServerPacket::ConnectionRejected {
                 reason: "Client already connected".to_string(),
             };
