@@ -1,4 +1,4 @@
-use shared::{ClientPacket, ServerPacket};
+use shared::{ClientPacket, MAX_PACKET_SIZE, ServerPacket};
 use std::{io, sync::Arc, time::SystemTime};
 use tokio::{net::UdpSocket, sync::Mutex, time};
 
@@ -66,7 +66,7 @@ async fn main() -> io::Result<()> {
         }
     });
 
-    let mut buf = Vec::new(); // TODO: maybe use something else instead
+    let mut buf = [0u8; MAX_PACKET_SIZE];
 
     // Receiving loop
     loop {
@@ -82,6 +82,8 @@ async fn main() -> io::Result<()> {
                             continue;
                         }
                     };
+
+                println!("Receive client packet: {:?}", packet);
 
                 let mut game = game_state.lock().await;
 
