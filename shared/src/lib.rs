@@ -1,7 +1,38 @@
 use serde::{Deserialize, Serialize};
-use std::time::{Duration, Instant};
+use std::{
+    collections::{HashMap, VecDeque},
+    ops::{Add, Mul, Sub},
+    time::{Duration, Instant},
+};
 
+// ===== World Constants ===== //
+pub const WORLD_WIDTH: f32 = 10_000.0;
+pub const WORLD_HEIGHT: f32 = 10_000.0;
+pub const WORLD_PADDING: f32 = 20.0;
+
+pub const WORLD_MIN_X: f32 = -WORLD_WIDTH / 2.0;
+pub const WORLD_MAX_X: f32 = WORLD_WIDTH / 2.0;
+pub const WORLD_MIN_Y: f32 = -WORLD_HEIGHT / 2.0;
+pub const WORLD_MAX_Y: f32 = WORLD_HEIGHT / 2.0;
+
+pub const WORLD_MIN_X_PADDED: f32 = WORLD_MIN_X + WORLD_PADDING;
+pub const WORLD_MAX_X_PADDED: f32 = WORLD_MAX_X - WORLD_PADDING;
+pub const WORLD_MIN_Y_PADDED: f32 = WORLD_MIN_Y + WORLD_PADDING;
+pub const WORLD_MAX_Y_PADDED: f32 = WORLD_MAX_Y - WORLD_PADDING;
+
+// ===== View Constants ===== //
+pub const VIEW_WIDTH: f32 = 1920.0;
+pub const VIEW_HEIGHT: f32 = 1080.0;
+pub const VIEW_PADDING: f32 = 20.0;
+pub const VIEW_SIZE: Vec2 = Vec2::new(
+    VIEW_WIDTH + 2.0 * VIEW_PADDING,
+    VIEW_HEIGHT + 2.0 * VIEW_PADDING,
+);
+
+// ===== Other Constants ===== //
 pub const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
+pub const INTERPOLATION_DELAY: Duration = Duration::from_millis(100); // Client render delay
+pub const LAG_COMPENSATION_HISTORY: Duration = Duration::from_secs(1);
 
 pub const SCOREBOARD_LENGTH: usize = 10;
 
@@ -11,14 +42,14 @@ pub type TickNumber = u64;
 pub type PlayerId = u64;
 pub type BulletId = u64;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Vec2 {
     pub x: f32,
     pub y: f32,
 }
 
 impl Vec2 {
-    pub fn new(x: f32, y: f32) -> Self {
+    pub const fn new(x: f32, y: f32) -> Self {
         Self { x, y }
     }
 
@@ -33,8 +64,50 @@ impl Vec2 {
             y: self.y / len,
         }
     }
+
+    pub fn dot(&self, rhs: &Vec2) -> f32 {
+        self.x * rhs.x + self.y * rhs.y
+    }
+
+    pub fn inbound(&self, rhs: &Vec2, size: &Vec2) -> bool {
+        (self.x - rhs.x).abs() <= size.x && (self.y - rhs.y).abs() <= size.y
+    }
 }
 
+impl Add for Vec2 {
+    type Output = Vec2;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Vec2 {
+            x: self.x + rhs.x,
+            y: self.y + rhs.y,
+        }
+    }
+}
+
+impl Sub for Vec2 {
+    type Output = Vec2;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Vec2 {
+            x: self.x - rhs.x,
+            y: self.y - rhs.y,
+        }
+    }
+}
+
+impl Mul<f32> for Vec2 {
+    type Output = Vec2;
+
+    fn mul(self, rhs: f32) -> Self::Output {
+        Vec2 {
+            x: self.x * rhs,
+            y: self.y * rhs,
+        }
+    }
+}
+
+// ===== States ===== //
 // TODO: add Spawning state where player is invincible for a certain amount of time
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LifeState {
@@ -72,6 +145,17 @@ impl PlayerState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdatedPlayerState {
+    pub id: PlayerId,
+    pub position: Vec2,
+    pub velocity: Vec2,
+    pub health: i32,
+    pub score: u64,
+    pub life: LifeState,
+    pub last_processed_input: SequenceNumber, // For clearing input queue on client side
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BulletState {
     pub id: BulletId,
     pub owner_id: PlayerId,
@@ -81,6 +165,7 @@ pub struct BulletState {
     pub damage: i32,
 }
 
+// ===== Client Input ===== //
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientInput {
     pub predicted_tick: TickNumber, // Client's predicted tick
@@ -90,6 +175,7 @@ pub struct ClientInput {
     pub shoot: bool,
 }
 
+// ===== Client & Server Packet ===== //
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientPacket {
     Connect { player_name: String },
@@ -99,20 +185,13 @@ pub enum ClientPacket {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerPacket {
-    ConnectionAccepted {
-        player_id: PlayerId,
-        full_snapshot: Snapshot,
-    },
-    ConnectionRejected {
-        reason: String,
-    },
-    Disconnect {
-        reason: String,
-    },
-    FullSnapshot(Snapshot),
-    DeltaSnapshot(DeltaSnapshot),
+    ConnectionAccepted { player_id: PlayerId },
+    ConnectionRejected { reason: String },
+    Disconnect { reason: String },
+    ViewSnapshot(ViewSnapshot),
 }
 
+// ===== Client Connection ===== //
 #[derive(Debug, Clone)]
 pub struct ClientConnection {
     pub player_id: PlayerId,
@@ -133,6 +212,8 @@ impl ClientConnection {
         self.last_heard.elapsed() > CLIENT_TIMEOUT
     }
 }
+
+// ===== Score Entry (used in scoreboard) ===== //
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScoreEntry {
     pub player_id: PlayerId,
@@ -151,8 +232,11 @@ impl PartialOrd for ScoreEntry {
     }
 }
 
+// ===== View Snapshot ===== //
+/// Player-specific snapshot, only visible entities
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Snapshot {
+pub struct ViewSnapshot {
+    pub viewer_position: Vec2,
     pub tick: TickNumber,
 
     pub players: Vec<PlayerState>,
@@ -160,17 +244,89 @@ pub struct Snapshot {
     pub scoreboard: [ScoreEntry; SCOREBOARD_LENGTH],
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DeltaSnapshot {
+// ===== Server-side Lag Compensator ===== //
+pub struct LagCompensator {
+    snapshots: VecDeque<LagCompensatorSnapshot>,
+}
+
+// TODO: find a better name
+pub struct LagCompensatorSnapshot {
+    pub time: Instant,
     pub tick: TickNumber,
-    pub base_tick: TickNumber, // Last acknowledged snapshot
+    pub player_positions: HashMap<PlayerId, Vec2>,
+}
 
-    pub added_players: Vec<PlayerState>,
-    pub removed_players: Vec<PlayerId>,
-    pub updated_players: Vec<PlayerState>,
+impl LagCompensator {
+    pub fn new() -> Self {
+        Self {
+            snapshots: VecDeque::new(),
+        }
+    }
 
-    pub added_bullets: Vec<BulletState>,
-    pub removed_bullets: Vec<BulletId>,
+    /// Record current state of all players
+    pub fn record_tick(&mut self, tick: TickNumber, players: &HashMap<PlayerId, PlayerState>) {
+        let snapshot = LagCompensatorSnapshot {
+            time: Instant::now(),
+            tick,
+            player_positions: players
+                .iter()
+                .filter_map(|(id, p)| match p.life {
+                    LifeState::Alive => Some((*id, p.position)),
+                    LifeState::Dead { respawn_time: _ } => None,
+                })
+                .collect(),
+        };
 
-    pub scoreboard: Option<[ScoreEntry; SCOREBOARD_LENGTH]>,
+        self.snapshots.push_back(snapshot);
+
+        let cutoff = Instant::now() - LAG_COMPENSATION_HISTORY;
+        while let Some(front) = self.snapshots.front() {
+            if front.time < cutoff {
+                self.snapshots.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Rewind all players to a specific time
+    pub fn rewind_to_time(&self, target_time: Instant) -> HashMap<PlayerId, Vec2> {
+        let idx = match self
+            .snapshots
+            .binary_search_by(|s| s.time.cmp(&target_time))
+        {
+            Ok(i) => return self.snapshots[i].player_positions.clone(),
+            Err(i) => i,
+        };
+
+        // Interpolate between snapshots
+        let prev = &self.snapshots[idx - 1];
+        let next = &self.snapshots[idx];
+
+        let total_duration = next.time.duration_since(prev.time).as_secs_f32();
+        let elapsed = target_time.duration_since(prev.time).as_secs_f32();
+        let t = (elapsed / total_duration).clamp(0.0, 1.0);
+
+        // Interpolate all positions
+        let mut result = HashMap::new();
+        for (&player_id, &prev_pos) in &prev.player_positions {
+            let interpolated_pos = match next.player_positions.get(&player_id) {
+                Some(next_pos) => Vec2::new(
+                    prev_pos.x + (next_pos.x - prev_pos.x) * t,
+                    prev_pos.y + (next_pos.y - prev_pos.y) * t,
+                ),
+                None => prev_pos, // Player disconnected after prev snapshot
+            };
+
+            result.insert(player_id, interpolated_pos);
+        }
+
+        result
+    }
+
+    /// Calculate when a client input was executed based on latency
+    pub fn calculate_command_time(&self, client_latency: Duration) -> Instant {
+        // Command Execution Time = Current Server Time - Packet Latency - Client Interpolation
+        Instant::now() - client_latency - INTERPOLATION_DELAY
+    }
 }

@@ -7,8 +7,10 @@ use std::{
 };
 
 use shared::{
-    BulletId, BulletState, ClientConnection, ClientInput, DeltaSnapshot, LifeState, PlayerId,
-    PlayerState, SCOREBOARD_LENGTH, ScoreEntry, ServerPacket, Snapshot, TickNumber, Vec2,
+    BulletState, ClientConnection, ClientInput, LagCompensator, LifeState, PlayerId, PlayerState,
+    SCOREBOARD_LENGTH, ScoreEntry, ServerPacket, TickNumber, VIEW_SIZE, Vec2, ViewSnapshot,
+    WORLD_MAX_X, WORLD_MAX_X_PADDED, WORLD_MAX_Y, WORLD_MAX_Y_PADDED, WORLD_MIN_X,
+    WORLD_MIN_X_PADDED, WORLD_MIN_Y, WORLD_MIN_Y_PADDED,
 };
 
 // ===== Default Constants ===== //
@@ -18,48 +20,35 @@ pub const TICK_DURATION: Duration = Duration::from_nanos(1_000_000_000 / TICK_RA
 pub const SNAPSHOT_RATE: u32 = 20; // Snapshots per second to each client
 pub const SNAPSHOT_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / SNAPSHOT_RATE as u64);
 
-// ===== World Constants ===== //
-const WORLD_WIDTH: f32 = 2000.0;
-const WORLD_HEIGHT: f32 = 2000.0;
-const WORLD_PADDING: f32 = 20.0;
-
-const WORLD_MIN_X: f32 = -WORLD_WIDTH / 2.0;
-const WORLD_MAX_X: f32 = WORLD_WIDTH / 2.0;
-const WORLD_MIN_Y: f32 = -WORLD_HEIGHT / 2.0;
-const WORLD_MAX_Y: f32 = WORLD_HEIGHT / 2.0;
-
-const WORLD_MIN_X_PADDED: f32 = WORLD_MIN_X + WORLD_PADDING;
-const WORLD_MAX_X_PADDED: f32 = WORLD_MAX_X - WORLD_PADDING;
-const WORLD_MIN_Y_PADDED: f32 = WORLD_MIN_Y + WORLD_PADDING;
-const WORLD_MAX_Y_PADDED: f32 = WORLD_MAX_Y - WORLD_PADDING;
-
 // ===== Player Constants ===== //
 const PLAYER_MOVE_SPEED: f32 = 300.0;
 const PLAYER_MAX_HEALTH: i32 = 100;
 const PLAYER_RESPAWN_TIME_SECS: f32 = 5.0;
-const MAX_PLAYERS: usize = 20_000;
+const MAX_PLAYERS: usize = 1_000;
 const PLAYER_RADIUS: f32 = 20.0;
 
 // ===== Bullet Constants ===== //
 const BULLET_LIFETIME: Duration = Duration::from_secs(3); // 3 seconds
 const BULLET_LIFETIME_TICKS: TickNumber = BULLET_LIFETIME.as_secs() * (TICK_RATE as u64);
+const BULLET_SPEED: f32 = 800.0;
+const BULLET_INSTANT_HIT_MAX_RANGE: f32 = 20.0;
 const BULLET_DAMAGE: i32 = 20;
 const MAX_BULLETS: usize = 100_000;
 const BULLET_RADIUS: f32 = 5.0;
 
 // ===== Game Server ===== //
-#[derive(Debug, Clone)]
 pub struct GameServer {
     players: HashMap<PlayerId, PlayerState>,
     bullets: Vec<BulletState>,
-
-    next_player_id: u64,
-    next_bullet_id: u64,
 
     clients: HashMap<SocketAddr, ClientConnection>,
     addr_to_player_id: HashMap<SocketAddr, PlayerId>,
 
     current_tick: TickNumber,
+    next_player_id: u64,
+    next_bullet_id: u64,
+
+    lag_compensator: LagCompensator,
 
     input_queue: Vec<(SocketAddr, ClientInput)>,
 }
@@ -70,24 +59,17 @@ impl GameServer {
             players: HashMap::new(),
             bullets: Vec::new(),
 
-            next_player_id: 0,
-            next_bullet_id: 0,
-
             clients: HashMap::new(),
             addr_to_player_id: HashMap::new(),
 
             current_tick: 0,
+            next_player_id: 0,
+            next_bullet_id: 0,
+
+            lag_compensator: LagCompensator::new(),
 
             input_queue: Vec::new(),
         }
-    }
-
-    pub fn get_clients(&self) -> Vec<SocketAddr> {
-        self.clients.keys().cloned().collect::<Vec<_>>()
-    }
-
-    pub fn current_tick(&self) -> u64 {
-        self.current_tick
     }
 
     pub fn handle_connect(&mut self, addr: SocketAddr, player_name: String) -> ServerPacket {
@@ -111,12 +93,7 @@ impl GameServer {
         self.addr_to_player_id.insert(addr, player_id);
         self.players.insert(player_id, player);
 
-        let full_snapshot = self.generate_full_snapshot();
-
-        ServerPacket::ConnectionAccepted {
-            player_id,
-            full_snapshot,
-        }
+        ServerPacket::ConnectionAccepted { player_id }
     }
 
     // TODO: avoid spawn near enemy
@@ -133,10 +110,6 @@ impl GameServer {
         }
 
         self.next_player_id
-    }
-
-    fn generate_next_bullet_id(&mut self) -> anyhow::Result<BulletId> {
-        todo!()
     }
 
     pub fn handle_disconnect(&mut self, addr: SocketAddr) {
@@ -169,8 +142,8 @@ impl GameServer {
     fn process_inputs(&mut self, delta_time: f32) {
         self.input_queue.sort_by_key(|a| a.1.sequence);
 
-        for (addr, input) in &self.input_queue {
-            let Some(player_id) = self.addr_to_player_id.get(addr) else {
+        for (addr, input) in self.input_queue.clone() {
+            let Some(player_id) = self.addr_to_player_id.get(&addr) else {
                 continue;
             };
 
@@ -183,18 +156,18 @@ impl GameServer {
                 LifeState::Dead { respawn_time: _ } => continue,
             };
 
-            Self::apply_movement(player, input, delta_time);
-            if input.shoot {
-                Self::handle_shoot(player, input);
-            }
-
             player.last_processed_input = input.sequence;
+
+            Self::apply_movement(player, &input, delta_time);
+            if input.shoot {
+                self.handle_shoot(addr, *player_id);
+            }
         }
     }
 
     fn apply_movement(player: &mut PlayerState, input: &ClientInput, delta_time: f32) {
         // Normalize movement direction
-        let move_dir = input.move_direction.clone().normalized();
+        let move_dir = input.move_direction.normalized();
 
         // Apply velocity
         player.velocity = Vec2::new(
@@ -217,9 +190,108 @@ impl GameServer {
             .clamp(WORLD_MIN_Y_PADDED, WORLD_MAX_Y_PADDED);
     }
 
-    fn handle_shoot(player: &mut PlayerState, input: &ClientInput) {
-        // Spawn bullet object, with lag compensation
-        todo!()
+    fn handle_shoot(&mut self, shooter_addr: SocketAddr, shooter_id: PlayerId) {
+        let Some(client) = self.clients.get(&shooter_addr) else {
+            return;
+        };
+
+        let Some(shooter) = self.players.get(&shooter_id) else {
+            return;
+        };
+
+        let command_execution_time = self.lag_compensator.calculate_command_time(client.latency);
+
+        let rewound_positions = self.lag_compensator.rewind_to_time(command_execution_time);
+
+        let bullet_id = self.next_bullet_id;
+        self.next_bullet_id += 1;
+
+        let bullet = BulletState {
+            id: bullet_id,
+            owner_id: shooter_id,
+            position: shooter.position,
+            velocity: shooter.velocity.normalized() * BULLET_SPEED,
+            spawn_tick: self.current_tick,
+            damage: BULLET_DAMAGE,
+        };
+
+        if let Some(target_id) = self.check_instant_hit(shooter_id, &bullet, &rewound_positions) {
+            // Hit detected, Apply damage immediately
+            if let Some(target) = self.players.get_mut(&target_id) {
+                target.health -= bullet.damage;
+
+                if target.health <= 0 {
+                    self.handle_player_death(target_id, shooter_id);
+                }
+            }
+        } else {
+            // No instant hit, spawn the bullet projectile
+            self.bullets.push(bullet);
+        }
+    }
+
+    fn check_instant_hit(
+        &self,
+        shooter_id: PlayerId,
+        bullet: &BulletState,
+        rewound_positions: &HashMap<PlayerId, Vec2>,
+    ) -> Option<PlayerId> {
+        let shoot_pos = bullet.position;
+        let shoot_dir = bullet.velocity.normalized();
+
+        let mut closest_hit = None;
+        let mut closest_dist = BULLET_INSTANT_HIT_MAX_RANGE;
+
+        for (&player_id, &pos) in rewound_positions {
+            if player_id == shooter_id {
+                continue; // Don't shoot yourself
+            }
+
+            let Some(dist) = Self::ray_intersects_circle(
+                shoot_pos,
+                shoot_dir,
+                pos,
+                PLAYER_RADIUS,
+                BULLET_INSTANT_HIT_MAX_RANGE,
+            ) else {
+                continue;
+            };
+
+            if dist < closest_dist {
+                closest_hit = Some(player_id);
+                closest_dist = dist;
+            }
+        }
+
+        closest_hit
+    }
+
+    fn ray_intersects_circle(
+        ray_origin: Vec2,
+        ray_direction: Vec2, // Must be normalized
+        circle_origin: Vec2,
+        circle_radius: f32,
+        max_range: f32,
+    ) -> Option<f32> {
+        let radius_sq = circle_radius * circle_radius;
+
+        let to_target = circle_origin - ray_origin;
+
+        let t = to_target.dot(&ray_direction);
+
+        if t < 0.0 || t > max_range {
+            return None;
+        }
+
+        let to_target_len = to_target.length();
+        let to_target_len_sq = to_target_len * to_target_len;
+        let dist_sq_to_ray = to_target_len_sq - (t * t);
+
+        if dist_sq_to_ray >= 0.0 && dist_sq_to_ray <= radius_sq {
+            return Some(t);
+        }
+
+        None
     }
 
     fn update_bullets(&mut self, delta_time: f32) {
@@ -332,17 +404,42 @@ impl GameServer {
         to_remove
     }
 
-    pub fn generate_full_snapshot(&self) -> Snapshot {
-        Snapshot {
-            tick: self.current_tick,
-            players: self.players.values().cloned().collect(),
-            bullets: self.bullets.clone(),
-            scoreboard: self.generate_scoreboard(),
-        }
-    }
+    pub fn generate_all_players_snapshot(&self) -> Vec<(SocketAddr, ViewSnapshot)> {
+        let mut result = Vec::new();
 
-    pub fn generate_delta_snapshot(&self, base_tick: TickNumber) -> DeltaSnapshot {
-        todo!()
+        let scoreboard = self.generate_scoreboard();
+
+        for (addr, viewer_id) in &self.addr_to_player_id {
+            let Some(viewer) = self.players.get(viewer_id) else {
+                continue;
+            };
+
+            let inbound_players = self
+                .players
+                .values()
+                .filter(|p| p.position.inbound(&viewer.position, &VIEW_SIZE))
+                .cloned()
+                .collect::<Vec<_>>();
+
+            let inbound_bullets = self
+                .bullets
+                .iter()
+                .filter(|b| b.position.inbound(&viewer.position, &VIEW_SIZE))
+                .cloned()
+                .collect::<Vec<_>>();
+
+            let snapshot = ViewSnapshot {
+                viewer_position: viewer.position,
+                tick: self.current_tick,
+                players: inbound_players,
+                bullets: inbound_bullets,
+                scoreboard: scoreboard.clone(),
+            };
+
+            result.push((*addr, snapshot));
+        }
+
+        result
     }
 
     fn generate_scoreboard(&self) -> [ScoreEntry; SCOREBOARD_LENGTH] {

@@ -48,31 +48,20 @@ async fn main() -> io::Result<()> {
     let game_snapshot_state = Arc::clone(&game_state);
     tokio::spawn(async move {
         let mut ticker = time::interval(SNAPSHOT_INTERVAL);
-        let mut buf = Vec::new(); // TODO: maybe use something else instead
-        let mut base_tick: u64 = 0;
 
         loop {
             ticker.tick().await;
 
-            let game = game_snapshot_state.lock().await;
+            let snapshots = {
+                let game = game_snapshot_state.lock().await;
+                game.generate_all_players_snapshot()
+            };
 
-            let delta_snapshot = game.generate_delta_snapshot(base_tick);
-            base_tick = game.current_tick();
-
-            let clients = game.get_clients();
-
-            drop(game);
-
-            bincode::serde::encode_into_slice(
-                ServerPacket::DeltaSnapshot(delta_snapshot),
-                &mut buf,
-                bincode_cfg,
-            )
-            .unwrap();
-
-            // Send delta snapshot to every client
-            for addr in clients {
-                write_socket.send_to(&buf, addr).await.unwrap();
+            // Send snapshot to every client
+            for (addr, snapshot) in snapshots {
+                let packet = ServerPacket::ViewSnapshot(snapshot);
+                let packet_encoded = bincode::serde::encode_to_vec(packet, bincode_cfg).unwrap();
+                write_socket.send_to(&packet_encoded, addr).await.unwrap();
             }
         }
     });
