@@ -1,5 +1,5 @@
 use shared::{ClientPacket, ServerPacket};
-use std::{io, sync::Arc};
+use std::{io, sync::Arc, time::SystemTime};
 use tokio::{net::UdpSocket, sync::Mutex, time};
 
 use crate::game_server::{GameServer, SNAPSHOT_INTERVAL, TICK_DURATION};
@@ -72,6 +72,8 @@ async fn main() -> io::Result<()> {
     loop {
         match socket.recv_from(&mut buf).await {
             Ok((len, addr)) => {
+                let server_recv_time = SystemTime::now();
+
                 let packet: ClientPacket =
                     match bincode::serde::decode_from_slice(&buf[..len], bincode_cfg) {
                         Ok((p, _)) => p,
@@ -105,6 +107,20 @@ async fn main() -> io::Result<()> {
                     }
                     ClientPacket::Input(client_input) => {
                         game.queue_input(addr, client_input);
+                    }
+                    ClientPacket::TimeSync { client_send_time } => {
+                        let server_send_time = SystemTime::now();
+
+                        let packet = ServerPacket::TimeSync {
+                            client_send_time,
+                            server_recv_time,
+                            server_send_time,
+                        };
+
+                        let packet_encoded =
+                            bincode::serde::encode_to_vec(packet, bincode_cfg).unwrap();
+
+                        socket.send_to(&packet_encoded, addr).await.unwrap();
                     }
                 }
             }

@@ -1,9 +1,8 @@
 use std::{
-    array,
     cmp::Reverse,
     collections::{BinaryHeap, HashMap},
     net::SocketAddr,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use shared::{
@@ -120,6 +119,10 @@ impl GameServer {
     }
 
     pub fn queue_input(&mut self, addr: SocketAddr, input: ClientInput) {
+        if let Some(client) = self.clients.get_mut(&addr) {
+            client.last_heard = Instant::now();
+        }
+
         self.input_queue.push((addr, input))
     }
 
@@ -160,7 +163,7 @@ impl GameServer {
 
             Self::apply_movement(player, &input, delta_time);
             if input.shoot {
-                self.handle_shoot(addr, *player_id);
+                self.handle_shoot(*player_id, &input);
             }
         }
     }
@@ -190,19 +193,14 @@ impl GameServer {
             .clamp(WORLD_MIN_Y_PADDED, WORLD_MAX_Y_PADDED);
     }
 
-    fn handle_shoot(&mut self, shooter_addr: SocketAddr, shooter_id: PlayerId) {
-        let Some(client) = self.clients.get(&shooter_addr) else {
-            return;
-        };
-
+    fn handle_shoot(&mut self, shooter_id: PlayerId, input: &ClientInput) {
         let Some(shooter) = self.players.get(&shooter_id) else {
             return;
         };
 
-        let command_execution_time = self.lag_compensator.calculate_command_time(client.latency);
+        let rewound_positions = self.lag_compensator.rewind_to_time(input.prediected_time);
 
-        let rewound_positions = self.lag_compensator.rewind_to_time(command_execution_time);
-
+        // TODO: check if bullet_id already exist
         let bullet_id = self.next_bullet_id;
         self.next_bullet_id += 1;
 
@@ -442,7 +440,7 @@ impl GameServer {
         result
     }
 
-    fn generate_scoreboard(&self) -> [ScoreEntry; SCOREBOARD_LENGTH] {
+    fn generate_scoreboard(&self) -> Vec<ScoreEntry> {
         // 1. Initialize a Min-Heap of size K (SCOREBOARD_LENGTH)
         // We use Reverse to make the Max-Heap (BinaryHeap) act like a Min-Heap (it pops the smallest item)
         let mut min_heap: BinaryHeap<Reverse<ScoreEntry>> =
@@ -473,7 +471,6 @@ impl GameServer {
 
         final_entries.sort_by_key(|a| Reverse(a.score));
 
-        // 5. Convert to the fixed-size array.
-        array::from_fn(|i| final_entries[i].clone())
+        final_entries
     }
 }

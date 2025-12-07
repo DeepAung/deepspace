@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
     ops::{Add, Mul, Sub},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 // ===== World Constants ===== //
@@ -168,8 +168,8 @@ pub struct BulletState {
 // ===== Client Input ===== //
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientInput {
-    pub predicted_tick: TickNumber, // Client's predicted tick
-    pub sequence: SequenceNumber,   // Monotonic input sequence number
+    pub prediected_time: SystemTime, // Client's predicted time
+    pub sequence: SequenceNumber,    // Monotonic input sequence number
 
     pub move_direction: Vec2,
     pub shoot: bool,
@@ -181,14 +181,26 @@ pub enum ClientPacket {
     Connect { player_name: String },
     Disconnect,
     Input(ClientInput),
+    TimeSync { client_send_time: SystemTime },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerPacket {
-    ConnectionAccepted { player_id: PlayerId },
-    ConnectionRejected { reason: String },
-    Disconnect { reason: String },
+    ConnectionAccepted {
+        player_id: PlayerId,
+    },
+    ConnectionRejected {
+        reason: String,
+    },
+    Disconnect {
+        reason: String,
+    },
     ViewSnapshot(ViewSnapshot),
+    TimeSync {
+        client_send_time: SystemTime,
+        server_recv_time: SystemTime,
+        server_send_time: SystemTime,
+    },
 }
 
 // ===== Client Connection ===== //
@@ -196,7 +208,6 @@ pub enum ServerPacket {
 pub struct ClientConnection {
     pub player_id: PlayerId,
     pub last_heard: Instant,
-    pub latency: Duration, // Estimated round-trip time
 }
 
 impl ClientConnection {
@@ -204,7 +215,6 @@ impl ClientConnection {
         Self {
             player_id,
             last_heard: Instant::now(),
-            latency: Duration::from_millis(50), // Initial estimate
         }
     }
 
@@ -239,9 +249,10 @@ pub struct ViewSnapshot {
     pub viewer_position: Vec2,
     pub tick: TickNumber,
 
+    // TODO: maybe use Arc<[T]> instead of Vec
     pub players: Vec<PlayerState>,
     pub bullets: Vec<BulletState>,
-    pub scoreboard: [ScoreEntry; SCOREBOARD_LENGTH],
+    pub scoreboard: Vec<ScoreEntry>,
 }
 
 // ===== Server-side Lag Compensator ===== //
@@ -251,7 +262,7 @@ pub struct LagCompensator {
 
 // TODO: find a better name
 pub struct LagCompensatorSnapshot {
-    pub time: Instant,
+    pub time: SystemTime,
     pub tick: TickNumber,
     pub player_positions: HashMap<PlayerId, Vec2>,
 }
@@ -266,7 +277,7 @@ impl LagCompensator {
     /// Record current state of all players
     pub fn record_tick(&mut self, tick: TickNumber, players: &HashMap<PlayerId, PlayerState>) {
         let snapshot = LagCompensatorSnapshot {
-            time: Instant::now(),
+            time: SystemTime::now(),
             tick,
             player_positions: players
                 .iter()
@@ -279,7 +290,7 @@ impl LagCompensator {
 
         self.snapshots.push_back(snapshot);
 
-        let cutoff = Instant::now() - LAG_COMPENSATION_HISTORY;
+        let cutoff = SystemTime::now() - LAG_COMPENSATION_HISTORY;
         while let Some(front) = self.snapshots.front() {
             if front.time < cutoff {
                 self.snapshots.pop_front();
@@ -290,7 +301,7 @@ impl LagCompensator {
     }
 
     /// Rewind all players to a specific time
-    pub fn rewind_to_time(&self, target_time: Instant) -> HashMap<PlayerId, Vec2> {
+    pub fn rewind_to_time(&self, target_time: SystemTime) -> HashMap<PlayerId, Vec2> {
         let idx = match self
             .snapshots
             .binary_search_by(|s| s.time.cmp(&target_time))
@@ -303,8 +314,8 @@ impl LagCompensator {
         let prev = &self.snapshots[idx - 1];
         let next = &self.snapshots[idx];
 
-        let total_duration = next.time.duration_since(prev.time).as_secs_f32();
-        let elapsed = target_time.duration_since(prev.time).as_secs_f32();
+        let total_duration = next.time.duration_since(prev.time).unwrap().as_secs_f32();
+        let elapsed = target_time.duration_since(prev.time).unwrap().as_secs_f32();
         let t = (elapsed / total_duration).clamp(0.0, 1.0);
 
         // Interpolate all positions
@@ -322,11 +333,5 @@ impl LagCompensator {
         }
 
         result
-    }
-
-    /// Calculate when a client input was executed based on latency
-    pub fn calculate_command_time(&self, client_latency: Duration) -> Instant {
-        // Command Execution Time = Current Server Time - Packet Latency - Client Interpolation
-        Instant::now() - client_latency - INTERPOLATION_DELAY
     }
 }
