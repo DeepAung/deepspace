@@ -9,3 +9,20 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 bincode = { workspace = true }
 tokio = { workspace = true }
+bevy = "0.17.3"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
+[profile.wasm-release]
+inherits = "release"
+# Optimize with size in mind (also try "z", sometimes it is better).
+opt-level = "s"
+strip = "debuginfo"
