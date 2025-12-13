@@ -2,38 +2,10 @@ use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap, hash_map::Entry},
     net::SocketAddr,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
-use shared::{
-    BulletState, ClientConnection, ClientInput, LagCompensator, LifeState, PlayerId, PlayerState,
-    SCOREBOARD_LENGTH, ScoreEntry, ServerPacket, TickNumber, VIEW_SIZE, Vec2, ViewSnapshot,
-    WORLD_MAX_X, WORLD_MAX_X_PADDED, WORLD_MAX_Y, WORLD_MAX_Y_PADDED, WORLD_MIN_X,
-    WORLD_MIN_X_PADDED, WORLD_MIN_Y, WORLD_MIN_Y_PADDED,
-};
-
-// ===== Default Constants ===== //
-pub const TICK_RATE: u32 = 60; // Server simulation rate (Hz)
-pub const TICK_DURATION: Duration = Duration::from_nanos(1_000_000_000 / TICK_RATE as u64);
-
-pub const SNAPSHOT_RATE: u32 = 20; // Snapshots per second to each client
-pub const SNAPSHOT_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / SNAPSHOT_RATE as u64);
-
-// ===== Player Constants ===== //
-const PLAYER_MOVE_SPEED: f32 = 300.0;
-const PLAYER_MAX_HEALTH: i32 = 100;
-const PLAYER_RESPAWN_TIME_SECS: f32 = 5.0;
-const MAX_PLAYERS: usize = 1_000;
-const PLAYER_RADIUS: f32 = 20.0;
-
-// ===== Bullet Constants ===== //
-const BULLET_LIFETIME: Duration = Duration::from_secs(3); // 3 seconds
-const BULLET_LIFETIME_TICKS: TickNumber = BULLET_LIFETIME.as_secs() * (TICK_RATE as u64);
-const BULLET_SPEED: f32 = 800.0;
-const BULLET_INSTANT_HIT_MAX_RANGE: f32 = 20.0;
-const BULLET_DAMAGE: i32 = 20;
-const MAX_BULLETS: usize = 100_000;
-const BULLET_RADIUS: f32 = 5.0;
+use shared::*;
 
 // ===== Game Server ===== //
 pub struct GameServer {
@@ -159,38 +131,11 @@ impl GameServer {
                 LifeState::Dead { respawn_time: _ } => continue,
             };
 
-            player.last_processed_input = input.sequence;
-
-            Self::apply_movement(player, &input, delta_time);
+            player.apply_movement(&input, delta_time);
             if input.shoot {
                 self.handle_shoot(*player_id, &input);
             }
         }
-    }
-
-    fn apply_movement(player: &mut PlayerState, input: &ClientInput, delta_time: f32) {
-        // Normalize movement direction
-        let move_dir = input.move_direction.normalized();
-
-        // Apply velocity
-        player.velocity = Vec2::new(
-            move_dir.x * PLAYER_MOVE_SPEED,
-            move_dir.y * PLAYER_MOVE_SPEED,
-        );
-
-        // Update position
-        player.position.x += player.velocity.x * delta_time;
-        player.position.y += player.velocity.y * delta_time;
-
-        // Clamp to world bounds
-        player.position.x = player
-            .position
-            .x
-            .clamp(WORLD_MIN_X_PADDED, WORLD_MAX_X_PADDED);
-        player.position.y = player
-            .position
-            .y
-            .clamp(WORLD_MIN_Y_PADDED, WORLD_MAX_Y_PADDED);
     }
 
     fn handle_shoot(&mut self, shooter_id: PlayerId, input: &ClientInput) {

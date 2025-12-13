@@ -3,8 +3,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use shared::{ClientInput, ClientPacket, MAX_PACKET_SIZE, SequenceNumber, ServerPacket, Vec2};
+use shared::{ClientInput, ClientPacket, MAX_PACKET_SIZE, ServerPacket, Vec2};
 use tokio::net::UdpSocket;
+
+mod game_client;
 
 const SERVER_ADDR: &str = "0.0.0.0:8080";
 

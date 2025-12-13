@@ -1,8 +1,8 @@
-use shared::{ClientPacket, MAX_PACKET_SIZE, ServerPacket};
 use std::{io, sync::Arc, time::SystemTime};
-use tokio::{net::UdpSocket, sync::Mutex, time};
+use tokio::{net::UdpSocket, sync::Mutex, time as tokiotime};
 
-use crate::game_server::{GameServer, SNAPSHOT_INTERVAL, TICK_DURATION};
+use crate::game_server::GameServer;
+use shared::*;
 
 mod game_server;
 
@@ -20,7 +20,7 @@ async fn main() -> io::Result<()> {
     let game_socket = Arc::clone(&socket);
     let game_tick_state = Arc::clone(&game_state);
     tokio::spawn(async move {
-        let mut ticker = time::interval(TICK_DURATION);
+        let mut ticker = tokiotime::interval(TICK_DURATION);
 
         loop {
             ticker.tick().await;
@@ -47,7 +47,7 @@ async fn main() -> io::Result<()> {
     let write_socket = Arc::clone(&socket);
     let game_snapshot_state = Arc::clone(&game_state);
     tokio::spawn(async move {
-        let mut ticker = time::interval(SNAPSHOT_INTERVAL);
+        let mut ticker = tokiotime::interval(SNAPSHOT_INTERVAL);
 
         loop {
             ticker.tick().await;

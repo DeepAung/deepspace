@@ -5,6 +5,15 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
+// ===== Default Constants ===== //
+pub const TICK_RATE: u32 = 60; // Server simulation rate (Hz)
+pub const TICK_DURATION: Duration = Duration::from_nanos(1_000_000_000 / TICK_RATE as u64);
+
+pub const SNAPSHOT_RATE: u32 = 20; // Snapshots per second to each client
+pub const SNAPSHOT_INTERVAL: Duration = Duration::from_nanos(1_000_000_000 / SNAPSHOT_RATE as u64);
+
+pub const TIME_SYNC_DURATION: Duration = Duration::from_secs(1);
+
 // ===== World Constants ===== //
 pub const WORLD_WIDTH: f32 = 10_000.0;
 pub const WORLD_HEIGHT: f32 = 10_000.0;
@@ -19,6 +28,22 @@ pub const WORLD_MIN_X_PADDED: f32 = WORLD_MIN_X + WORLD_PADDING;
 pub const WORLD_MAX_X_PADDED: f32 = WORLD_MAX_X - WORLD_PADDING;
 pub const WORLD_MIN_Y_PADDED: f32 = WORLD_MIN_Y + WORLD_PADDING;
 pub const WORLD_MAX_Y_PADDED: f32 = WORLD_MAX_Y - WORLD_PADDING;
+
+// ===== Player Constants ===== //
+pub const PLAYER_MOVE_SPEED: f32 = 300.0;
+pub const PLAYER_MAX_HEALTH: i32 = 100;
+pub const PLAYER_RESPAWN_TIME_SECS: f32 = 5.0;
+pub const MAX_PLAYERS: usize = 1_000;
+pub const PLAYER_RADIUS: f32 = 20.0;
+
+// ===== Bullet Constants ===== //
+pub const BULLET_LIFETIME: Duration = Duration::from_secs(3); // 3 seconds
+pub const BULLET_LIFETIME_TICKS: TickNumber = BULLET_LIFETIME.as_secs() * (TICK_RATE as u64);
+pub const BULLET_SPEED: f32 = 800.0;
+pub const BULLET_INSTANT_HIT_MAX_RANGE: f32 = 20.0;
+pub const BULLET_DAMAGE: i32 = 20;
+pub const MAX_BULLETS: usize = 100_000;
+pub const BULLET_RADIUS: f32 = 5.0;
 
 // ===== View Constants ===== //
 pub const VIEW_WIDTH: f32 = 1920.0;
@@ -42,6 +67,7 @@ pub type SequenceNumber = u64;
 pub type TickNumber = u64;
 pub type PlayerId = u64;
 pub type BulletId = u64;
+pub type TimeSecs = f64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Vec2 {
@@ -142,6 +168,33 @@ impl PlayerState {
             life: LifeState::Alive,
             last_processed_input: 0,
         }
+    }
+
+    pub fn apply_movement(&mut self, input: &ClientInput, delta_time: f32) {
+        // Normalize movement direction
+        let move_dir = input.move_direction.normalized();
+
+        // Apply velocity
+        self.velocity = Vec2::new(
+            move_dir.x * PLAYER_MOVE_SPEED,
+            move_dir.y * PLAYER_MOVE_SPEED,
+        );
+
+        // Update position
+        self.position.x += self.velocity.x * delta_time;
+        self.position.y += self.velocity.y * delta_time;
+
+        // Clamp to world bounds
+        self.position.x = self
+            .position
+            .x
+            .clamp(WORLD_MIN_X_PADDED, WORLD_MAX_X_PADDED);
+        self.position.y = self
+            .position
+            .y
+            .clamp(WORLD_MIN_Y_PADDED, WORLD_MAX_Y_PADDED);
+
+        self.last_processed_input = input.sequence;
     }
 }
 
@@ -334,5 +387,192 @@ impl LagCompensator {
         }
 
         result
+    }
+}
+
+// ===== Client-side Prediction State ===== //
+pub struct PredictionState {
+    pending_inputs: VecDeque<ClientInput>,
+}
+
+impl PredictionState {
+    pub fn new() -> Self {
+        Self {
+            pending_inputs: VecDeque::new(),
+        }
+    }
+
+    /// Store a predicted state
+    pub fn push_prediction(&mut self, input: ClientInput) {
+        self.pending_inputs.push_front(input);
+        if self.pending_inputs.len() > 60 {
+            self.pending_inputs.pop_front();
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.pending_inputs.clear();
+    }
+
+    /// Reconcile with server snapshot
+    /// Returns the corrected state after replaying unacknowledged inputs
+    pub fn reconcile(
+        &mut self,
+        local_player: &mut Option<PlayerState>,
+        server_state: &PlayerState,
+    ) {
+        // Remove acknowledged inputs
+        self.pending_inputs
+            .retain(|input| input.sequence > server_state.last_processed_input);
+
+        // Check for prediction error
+        let prediction_error = if let Some(local) = &local_player {
+            let dx = local.position.x - server_state.position.x;
+            let dy = local.position.y - server_state.position.y;
+            (dx * dx + dy * dy).sqrt()
+        } else {
+            0.0
+        };
+
+        // If error is significant, correct it
+        const ERROR_THRESHOLD: f32 = 2.0; // 2 units
+
+        if prediction_error > ERROR_THRESHOLD {
+            println!(
+                "Prediction error: {:.2} units, reconciling...",
+                prediction_error
+            );
+
+            // Replay unacknowledged inputs
+            let mut corrected_state = server_state.clone();
+
+            for input in &self.pending_inputs {
+                corrected_state.apply_movement(&input, TICK_DURATION.as_secs_f32());
+            }
+
+            *local_player = Some(corrected_state);
+        } else {
+            // Small error, just update metadata
+            if let Some(local) = local_player {
+                local.health = server_state.health;
+                local.score = server_state.score;
+                local.life = server_state.life.clone();
+            }
+        }
+    }
+}
+
+// ===== Client-side Entity Interpolation ===== //
+pub struct InterpolationBuffer {
+    snapshots: VecDeque<(Instant, ViewSnapshot)>,
+}
+
+impl InterpolationBuffer {
+    pub fn new() -> Self {
+        Self {
+            snapshots: VecDeque::new(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.snapshots.clear();
+    }
+
+    /// Add a new snapshot
+    pub fn push_snapshot(&mut self, snapshot: ViewSnapshot) {
+        let now = Instant::now();
+        self.snapshots.push_back((now, snapshot));
+
+        // Keep only last 10 snapshots
+        if self.snapshots.len() > 10 {
+            self.snapshots.pop_front();
+        }
+    }
+
+    /// Get interpolated state for rendering
+    /// Render time is current time minus interpolation delay
+    pub fn interpolate(&self) -> Option<ViewSnapshot> {
+        if self.snapshots.len() < 2 {
+            return self.snapshots.back().map(|(_, s)| s.clone());
+        }
+
+        let render_time = Instant::now() - INTERPOLATION_DELAY;
+
+        // Find two snapshots to interpolate between
+        let mut from_snapshot = None;
+        let mut to_snapshot = None;
+
+        for i in 0..self.snapshots.len() - 1 {
+            let (time1, snap1) = &self.snapshots[i];
+            let (time2, snap2) = &self.snapshots[i + 1];
+
+            if *time1 <= render_time && render_time <= *time2 {
+                from_snapshot = Some((time1, snap1));
+                to_snapshot = Some((time2, snap2));
+                break;
+            }
+        }
+
+        match (from_snapshot, to_snapshot) {
+            (Some((time1, snap1)), Some((time2, snap2))) => {
+                let total_duration = time2.duration_since(*time1).as_secs_f32();
+                let elapsed = render_time.duration_since(*time1).as_secs_f32();
+                let t = (elapsed / total_duration).clamp(0.0, 1.0);
+
+                Some(Self::lerp_snapshots(snap1, snap2, t))
+            }
+            _ => self.snapshots.back().map(|(_, s)| s.clone()),
+        }
+    }
+
+    /// Linear interpolation between two snapshots
+    fn lerp_snapshots(from: &ViewSnapshot, to: &ViewSnapshot, t: f32) -> ViewSnapshot {
+        let mut result = from.clone();
+
+        let to_players = to
+            .players
+            .iter()
+            .map(|p| (p.id, p))
+            .collect::<HashMap<_, _>>();
+
+        let to_bullets = to
+            .bullets
+            .iter()
+            .map(|p| (p.id, p))
+            .collect::<HashMap<_, _>>();
+
+        // Interpolate player positions
+        for player in &mut result.players {
+            if let Some(to_player) = to_players.get(&player.id) {
+                player.position.lerp_mut(to_player.position, t)
+            };
+        }
+
+        // Interpolate bullet positions
+        for bullet in &mut result.bullets {
+            if let Some(to_bullet) = to_bullets.get(&bullet.id) {
+                bullet.position.lerp_mut(to_bullet.position, t)
+            };
+        }
+
+        result
+    }
+}
+
+pub trait Lerp {
+    fn lerp(from: Self, to: Self, t: f32) -> Self;
+    fn lerp_mut(&mut self, to: Self, t: f32);
+}
+
+impl<T> Lerp for T
+where
+    T: Copy + Add<Output = T> + Sub<Output = T> + Mul<f32, Output = T>,
+{
+    fn lerp(from: T, to: T, t: f32) -> T {
+        from * (1.0 - t) + to * t // Same as `from + (to - from) * t`
+    }
+
+    fn lerp_mut(&mut self, to: Self, t: f32) {
+        *self = Self::lerp(*self, to, t)
     }
 }
