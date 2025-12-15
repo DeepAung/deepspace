@@ -2,7 +2,7 @@ use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap, hash_map::Entry},
     net::SocketAddr,
-    time::Instant,
+    time::{Instant, SystemTime},
 };
 
 use shared::*;
@@ -91,11 +91,32 @@ impl GameServer {
     }
 
     pub fn queue_input(&mut self, addr: SocketAddr, input: ClientInput) {
+        self.update_last_heard(addr);
+
+        self.input_queue.push((addr, input))
+    }
+
+    pub fn handle_time_sync(
+        &mut self,
+        addr: SocketAddr,
+        client_send_time: SystemTime,
+        server_recv_time: SystemTime,
+    ) -> ServerPacket {
+        self.update_last_heard(addr);
+
+        let server_send_time = SystemTime::now();
+
+        ServerPacket::TimeSync {
+            client_send_time,
+            server_recv_time,
+            server_send_time,
+        }
+    }
+
+    fn update_last_heard(&mut self, addr: SocketAddr) {
         if let Some(client) = self.clients.get_mut(&addr) {
             client.last_heard = Instant::now();
         }
-
-        self.input_queue.push((addr, input))
     }
 
     pub fn tick(&mut self, delta_time: f32) -> Vec<SocketAddr> {

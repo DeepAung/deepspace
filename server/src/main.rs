@@ -111,13 +111,8 @@ async fn main() -> io::Result<()> {
                         game.queue_input(addr, client_input);
                     }
                     ClientPacket::TimeSync { client_send_time } => {
-                        let server_send_time = SystemTime::now();
-
-                        let packet = ServerPacket::TimeSync {
-                            client_send_time,
-                            server_recv_time,
-                            server_send_time,
-                        };
+                        let packet =
+                            game.handle_time_sync(addr, client_send_time, server_recv_time);
 
                         let packet_encoded =
                             bincode::serde::encode_to_vec(packet, bincode_cfg).unwrap();
