@@ -1,10 +1,7 @@
 use anyhow::bail;
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::net::{SocketAddr, UdpSocket};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::net::UdpSocket;
-use tokio::sync::Mutex;
-use tokio::time as tokiotime;
 
 use shared::*;
 
@@ -54,31 +51,35 @@ impl GameClient {
         }
     }
 
-    pub async fn connect(&mut self, socket: &UdpSocket, player_name: String) -> anyhow::Result<()> {
+    pub fn connected(&self) -> bool {
+        self.connected
+    }
+
+    pub fn connect(&mut self, socket: &UdpSocket, player_name: String) -> anyhow::Result<()> {
         if self.connected {
             bail!("Client already connected")
         }
 
         let packet = ClientPacket::Connect { player_name };
         let packet_encoded = bincode::serde::encode_to_vec(packet, self.bincode_cfg)?;
-        socket.send_to(&packet_encoded, self.server_addr).await?;
+        socket.send_to(&packet_encoded, self.server_addr)?;
 
         Ok(())
     }
 
-    pub async fn disconnect(&mut self, socket: &UdpSocket) -> anyhow::Result<()> {
+    pub fn disconnect(&mut self, socket: &UdpSocket) -> anyhow::Result<()> {
         if !self.connected {
             bail!("Client not connected yet")
         }
 
         let packet = ClientPacket::Disconnect;
         let packet_encoded = bincode::serde::encode_to_vec(packet, self.bincode_cfg)?;
-        socket.send_to(&packet_encoded, self.server_addr).await?;
+        socket.send_to(&packet_encoded, self.server_addr)?;
 
         Ok(())
     }
 
-    pub async fn send_input(
+    pub fn send_input(
         &mut self,
         socket: &UdpSocket,
         move_direction: Vec2,
@@ -109,12 +110,12 @@ impl GameClient {
         // Send to server
         let packet = ClientPacket::Input(input);
         let packet_encoded = bincode::serde::encode_to_vec(packet, self.bincode_cfg)?;
-        socket.send_to(&packet_encoded, self.server_addr).await?;
+        socket.send_to(&packet_encoded, self.server_addr)?;
 
         Ok(())
     }
 
-    async fn time_sync(&self, socket: &UdpSocket) -> anyhow::Result<()> {
+    pub fn time_sync(&self, socket: &UdpSocket) -> anyhow::Result<()> {
         if !self.connected {
             bail!("Client not connected yet")
         }
@@ -123,65 +124,53 @@ impl GameClient {
         let packet = ClientPacket::TimeSync { client_send_time };
         let packet_encoded = bincode::serde::encode_to_vec(packet, self.bincode_cfg)?;
 
-        socket.send_to(&packet_encoded, self.server_addr).await?;
+        socket.send_to(&packet_encoded, self.server_addr)?;
 
         Ok(())
     }
 
-    pub async fn run_loop(self, socket: Arc<UdpSocket>) {
-        println!("Start client run loop");
-
-        // TODO: should I use RwLock instead?
-        let game_client = Arc::new(Mutex::new(self));
-
-        // Time Sync Loop
-        let time_sync_socket = Arc::clone(&socket);
-        let time_sync_game_client = Arc::clone(&game_client);
-        tokio::spawn(async move {
-            let mut ticker = tokiotime::interval(TIME_SYNC_DURATION);
-
-            loop {
-                ticker.tick().await;
-
-                let game = time_sync_game_client.lock().await;
-
-                game.time_sync(&time_sync_socket).await.unwrap();
-            }
-        });
-
-        // Receiver loop
+    pub fn recv_loop(game_client: Arc<Mutex<GameClient>>, socket: Arc<UdpSocket>) {
         let mut buf = vec![0u8; MAX_PACKET_SIZE];
+
         loop {
-            match socket.recv_from(&mut buf).await {
+            println!("TRY RECV FROM BUF");
+            match socket.recv_from(&mut buf) {
                 Ok((len, _)) => {
                     let client_recv_time = SystemTime::now();
-                    let mut game = game_client.lock().await;
 
-                    let packet: ServerPacket =
-                        match bincode::serde::decode_from_slice(&buf[..len], game.bincode_cfg) {
-                            Ok((p, _)) => p,
-                            Err(e) => {
-                                eprintln!("Error decoding server packet: {}", e);
-                                continue;
-                            }
-                        };
+                    let packet: ServerPacket = match bincode::serde::decode_from_slice(
+                        &buf[..len],
+                        bincode::config::standard(),
+                    ) {
+                        Ok((p, _)) => p,
+                        Err(e) => {
+                            eprintln!("Error decoding server packet: {}", e);
+                            return;
+                        }
+                    };
+
+                    println!("Got server packet: {:?}", packet);
+
+                    let mut game_client = game_client.lock().unwrap();
 
                     match packet {
                         ServerPacket::ConnectionAccepted { player_id } => {
-                            game.handle_connection_accepted(player_id)
+                            game_client.handle_connection_accepted(player_id)
                         }
                         ServerPacket::ConnectionRejected { reason } => {
-                            game.handle_connection_rejected(reason)
+                            game_client.handle_connection_rejected(reason)
                         }
-                        ServerPacket::Disconnect { reason } => game.handle_disconnect(reason),
+                        ServerPacket::Disconnect { reason } => {
+                            game_client.handle_disconnect(reason)
+                        }
                         ServerPacket::ViewSnapshot(view_snapshot) => {
-                            game.handle_snapshot(view_snapshot)
+                            game_client.handle_snapshot(view_snapshot)
                         }
                         ServerPacket::TimeSync {
                             client_send_time,
                             server_recv_time,
                             server_send_time,
-                        } => game.handle_time_sync(
+                        } => game_client.handle_time_sync(
                             client_send_time,
                             server_recv_time,
                             server_send_time,
@@ -280,19 +269,40 @@ impl GameClient {
         self.round_trip_time = (t4 - t1) - (t3 - t2);
         self.clock_offset = (t2 - t1) + (self.round_trip_time / 2.0);
     }
+
+    pub fn get_render_state(&self) -> RenderState {
+        // Local player: use predicted state (no interpolation)
+        let local_player = self.local_player.clone();
+
+        // Other players: use interpolated state (delayed by 100ms)
+        let interpolated_snapshot = self.interpolation_buffer.interpolate();
+
+        let other_players = match interpolated_snapshot {
+            Some(snapshot) => snapshot
+                .players
+                .iter()
+                .filter(|p| Some(p.id) != self.player_id)
+                .cloned()
+                .collect(),
+            None => self.other_players.clone(),
+        };
+
+        // Bullets: no interpolation (fast-moving, short-lived)
+        let bullets = self.bullets.clone();
+
+        RenderState {
+            local_player,
+            other_players,
+            bullets,
+            scoreboard: self.scoreboard.clone(),
+        }
+    }
 }
 
-// #[derive(Debug, Clone)]
-// pub struct RenderState {
-//     pub local_player: Option<PlayerState>,
-//     pub other_players: Vec<PlayerState>,
-//     pub bullets: Vec<BulletState>,
-//     pub scoreboard: Vec<ScoreEntry>,
-// }
-//
-// pub async fn run_client_receiver(
-//     mut client: GameClient,
-//     socket: Arc<UdpSocket>,
-// ) -> anyhow::Result<()> {
-//     todo!()
-// }
+#[derive(Debug, Clone)]
+pub struct RenderState {
+    pub local_player: Option<PlayerState>,
+    pub other_players: Vec<PlayerState>,
+    pub bullets: Vec<BulletState>,
+    pub scoreboard: Vec<ScoreEntry>,
+}
