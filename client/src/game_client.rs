@@ -1,4 +1,5 @@
 use anyhow::bail;
+use crossbeam::channel::Sender;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -129,7 +130,11 @@ impl GameClient {
         Ok(())
     }
 
-    pub fn recv_loop(game_client: Arc<Mutex<GameClient>>, socket: Arc<UdpSocket>) {
+    pub fn recv_loop(
+        game_client: Arc<Mutex<GameClient>>,
+        socket: Arc<UdpSocket>,
+        tx: Sender<RenderState>,
+    ) {
         let mut buf = vec![0u8; MAX_PACKET_SIZE];
 
         loop {
@@ -164,7 +169,11 @@ impl GameClient {
                             game_client.handle_disconnect(reason)
                         }
                         ServerPacket::ViewSnapshot(view_snapshot) => {
-                            game_client.handle_snapshot(view_snapshot)
+                            game_client.handle_snapshot(view_snapshot);
+                            let render_state = game_client.get_render_state();
+                            drop(game_client);
+
+                            tx.send(render_state).unwrap();
                         }
                         ServerPacket::TimeSync {
                             client_send_time,
@@ -187,6 +196,8 @@ impl GameClient {
 
     fn handle_connection_accepted(&mut self, player_id: PlayerId) {
         self.player_id = Some(player_id);
+        // TODO: continue this
+        self.player = PlayerState::new(player_id);
         self.connected = true;
         println!("Connected! Player ID: {}", player_id);
     }
