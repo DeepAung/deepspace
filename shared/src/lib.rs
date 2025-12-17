@@ -241,7 +241,7 @@ pub enum ClientPacket {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerPacket {
     ConnectionAccepted {
-        player_id: PlayerId,
+        player: PlayerState,
     },
     ConnectionRejected {
         reason: String,

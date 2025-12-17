@@ -159,8 +159,8 @@ impl GameClient {
                     let mut game_client = game_client.lock().unwrap();
 
                     match packet {
-                        ServerPacket::ConnectionAccepted { player_id } => {
-                            game_client.handle_connection_accepted(player_id)
+                        ServerPacket::ConnectionAccepted { player } => {
+                            game_client.handle_connection_accepted(player)
                         }
                         ServerPacket::ConnectionRejected { reason } => {
                             game_client.handle_connection_rejected(reason)
@@ -194,11 +194,13 @@ impl GameClient {
         }
     }
 
-    fn handle_connection_accepted(&mut self, player_id: PlayerId) {
+    fn handle_connection_accepted(&mut self, player: PlayerState) {
+        let player_id = player.id;
+
         self.player_id = Some(player_id);
-        // TODO: continue this
-        self.player = PlayerState::new(player_id);
+        self.local_player = Some(player);
         self.connected = true;
+
         println!("Connected! Player ID: {}", player_id);
     }
 

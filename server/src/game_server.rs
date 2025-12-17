@@ -62,9 +62,9 @@ impl GameServer {
 
         self.clients.insert(addr, ClientConnection::new(player_id));
         self.addr_to_player_id.insert(addr, player_id);
-        self.players.insert(player_id, player);
+        self.players.insert(player_id, player.clone());
 
-        ServerPacket::ConnectionAccepted { player_id }
+        ServerPacket::ConnectionAccepted { player }
     }
 
     // TODO: avoid spawn near enemy
