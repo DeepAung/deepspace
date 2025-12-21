@@ -1,5 +1,4 @@
 use bevy::ecs::query::QuerySingleError;
-use bevy::math::ops::atan2;
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
@@ -7,11 +6,11 @@ use bevy::sprite_render::{Material2d, Material2dPlugin};
 use bevy::time::common_conditions::on_timer;
 use bevy::window::PrimaryWindow;
 use shared::{
-    BulletId, ClientInput, MoveDirection, PlayerId, TICK_DURATION, WORLD_HEIGHT, WORLD_WIDTH,
+    BulletId, BulletState, MoveDirection, PlayerId, PlayerState, TICK_DURATION, WORLD_HEIGHT,
+    WORLD_WIDTH,
 };
 use std::collections::HashMap;
 use std::f32::consts::PI;
-use std::time::SystemTime;
 
 use crate::plugins::{GameState, network::NetworkClient};
 
@@ -41,7 +40,7 @@ const SPACESHIP_SHAPE: Triangle2d = Triangle2d::new(
     Vec2::new(15.0, -20.0),
 );
 
-const BULLET_SHAPE: Rectangle = Rectangle::new(2.0, 5.0);
+const BULLET_SHAPE: Rectangle = Rectangle::new(5.0, 8.0);
 
 const MY_PLAYER_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
 const OTHER_PLAYER_COLOR: Color = Color::srgb(1.0, 0.0, 0.0);
@@ -212,7 +211,7 @@ fn render_game(
 ) {
     let state = network_client.get_render_state();
 
-    println!("get render state {:?}", state);
+    // println!("get render state {:?}", state);
 
     // --- LOCAL PLAYER ---
     let Some(local_player_state) = state.local_player else {
@@ -252,17 +251,17 @@ fn render_game(
 
     // --- REMOTE PLAYERS ---
     // 1. Build a map of incoming data [PlayerId -> Position]
-    let mut remote_player_states: HashMap<PlayerId, Vec2> = state
-        .other_players
-        .iter()
-        .map(|p| (p.id, Vec2::new(p.position.x, p.position.y)))
-        .collect();
+    let mut remote_player_states: HashMap<PlayerId, &PlayerState> =
+        state.other_players.iter().map(|p| (p.id, p)).collect();
 
     // 2. Update or Despawn existing entities
     for (entity, player, mut transform) in remote_players_query.iter_mut() {
-        if let Some(&pos) = remote_player_states.get(&player.id) {
-            // Update position
-            transform.translation = Vec3::new(pos.x, pos.y, PLAYER_LAYER);
+        if let Some(&player_state) = remote_player_states.get(&player.id) {
+            transform.rotation = Quat::from_rotation_z(player_state.rotation - PI / 2.0);
+
+            transform.translation.x = player_state.position.x;
+            transform.translation.y = player_state.position.y;
+
             // Remove from map so we know we processed it
             remote_player_states.remove(&player.id);
         } else {
@@ -271,29 +270,35 @@ fn render_game(
     }
 
     // 3. Spawn new entities (whatever is left in the map)
-    for (id, pos) in remote_player_states {
+    for (id, player_state) in remote_player_states {
         commands.spawn((
             InGameObject,
             Player { id },
             RemotePlayer,
             Mesh2d(meshes.add(SPACESHIP_SHAPE)),
             MeshMaterial2d(materials.add(OTHER_PLAYER_COLOR)),
-            Transform::from_xyz(pos.x, pos.y, PLAYER_LAYER),
+            Transform::from_xyz(
+                player_state.position.x,
+                player_state.position.y,
+                PLAYER_LAYER,
+            ),
         ));
     }
 
     // --- BULLETS ---
     // 1. Build map [BulletId -> (Position, OwnerId)]
-    let mut bullet_states: HashMap<BulletId, (Vec2, PlayerId)> = state
-        .bullets
-        .iter()
-        .map(|b| (b.id, (Vec2::new(b.position.x, b.position.y), b.owner_id)))
-        .collect();
+    let mut bullet_states: HashMap<BulletId, &BulletState> =
+        state.bullets.iter().map(|b| (b.id, b)).collect();
 
     // 2. Update or Despawn existing
     for (entity, bullet, mut transform) in bullets_query.iter_mut() {
-        if let Some(&(pos, _)) = bullet_states.get(&bullet.id) {
-            transform.translation = Vec3::new(pos.x, pos.y, BULLET_LAYER);
+        if let Some(bullet_state) = bullet_states.get(&bullet.id) {
+            let rotation = Vec2::new(bullet_state.velocity.x, bullet_state.velocity.y).to_angle();
+            transform.rotation = Quat::from_rotation_z(rotation - PI / 2.0);
+
+            transform.translation.x = bullet_state.position.x;
+            transform.translation.y = bullet_state.position.y;
+
             bullet_states.remove(&bullet.id);
         } else {
             commands.entity(entity).despawn();
@@ -301,9 +306,9 @@ fn render_game(
     }
 
     // 3. Spawn new
-    for (id, (pos, owner_id)) in bullet_states {
+    for (id, bullet_state) in bullet_states {
         // Determine color based on owner
-        let color = if owner_id == local_player_state.id {
+        let color = if bullet_state.owner_id == local_player_state.id {
             MY_BULLET_COLOR
         } else {
             OTHER_BULLET_COLOR
@@ -314,7 +319,11 @@ fn render_game(
             Bullet { id },
             Mesh2d(meshes.add(BULLET_SHAPE)),
             MeshMaterial2d(materials.add(color)),
-            Transform::from_xyz(pos.x, pos.y, BULLET_LAYER),
+            Transform::from_xyz(
+                bullet_state.position.x,
+                bullet_state.position.y,
+                BULLET_LAYER,
+            ),
         ));
     }
 }

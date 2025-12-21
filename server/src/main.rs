@@ -83,7 +83,7 @@ async fn main() -> io::Result<()> {
                         }
                     };
 
-                println!("Receive client packet: {:?}", packet);
+                // println!("Receive client packet: {:?}", packet);
 
                 let mut game = game_state.lock().await;
 

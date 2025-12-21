@@ -57,7 +57,7 @@ pub const VIEW_SIZE: Vec2 = Vec2::new(
 // ===== Other Constants ===== //
 pub const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 pub const INTERPOLATION_DELAY: Duration = Duration::from_millis(100); // Client render delay
-pub const LAG_COMPENSATION_HISTORY: Duration = Duration::from_secs(1);
+pub const LAG_COMPENSATION_HISTORY: Duration = Duration::from_secs(5);
 pub const MAX_PACKET_SIZE: usize = 65535;
 
 pub const SCOREBOARD_LENGTH: usize = 10;
@@ -229,8 +229,8 @@ pub struct BulletState {
 // ===== Client Input ===== //
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientInput {
-    pub prediected_time: SystemTime, // Client's predicted time
-    pub sequence: SequenceNumber,    // Monotonic input sequence number
+    pub predicted_time: SystemTime, // Client's predicted time
+    pub sequence: SequenceNumber,   // Monotonic input sequence number
 
     pub move_direction: MoveDirection,
     pub rotation: f32,
@@ -357,6 +357,8 @@ impl LagCompensator {
                 .collect(),
         };
 
+        // println!("record tick current len: {:?}", self.snapshots.len());
+
         self.snapshots.push_back(snapshot);
 
         let cutoff = SystemTime::now() - LAG_COMPENSATION_HISTORY;
@@ -370,14 +372,26 @@ impl LagCompensator {
     }
 
     /// Rewind all players to a specific time
-    pub fn rewind_to_time(&self, target_time: SystemTime) -> HashMap<PlayerId, Vec2> {
+    pub fn rewind_to_time(&self, target_time: SystemTime) -> Option<HashMap<PlayerId, Vec2>> {
+        if self.snapshots.len() < 2 {
+            return Some(self.snapshots.back()?.player_positions.clone());
+        }
+
         let idx = match self
             .snapshots
             .binary_search_by(|s| s.time.cmp(&target_time))
         {
-            Ok(i) => return self.snapshots[i].player_positions.clone(),
+            Ok(i) => return Some(self.snapshots[i].player_positions.clone()),
             Err(i) => i,
         };
+
+        if idx == 0 {
+            return Some(self.snapshots[0].player_positions.clone());
+        }
+
+        if idx >= self.snapshots.len() {
+            return Some(self.snapshots.back()?.player_positions.clone());
+        }
 
         // Interpolate between snapshots
         let prev = &self.snapshots[idx - 1];
@@ -401,7 +415,7 @@ impl LagCompensator {
             result.insert(player_id, interpolated_pos);
         }
 
-        result
+        Some(result)
     }
 }
 

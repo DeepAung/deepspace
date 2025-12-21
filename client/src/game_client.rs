@@ -95,7 +95,7 @@ impl GameClient {
         // Create input
         let prediected_time = SystemTime::now() + Duration::from_secs_f64(self.clock_offset);
         let input = ClientInput {
-            prediected_time,
+            predicted_time: prediected_time,
             sequence: self.next_input_sequence,
             move_direction,
             rotation,
@@ -287,7 +287,7 @@ impl GameClient {
             None => self.other_players.clone(),
         };
 
-        // Bullets: no interpolation (fast-moving, short-lived)
+        // TODO: add interpolation on bullets
         let bullets = self.bullets.clone();
 
         RenderState {

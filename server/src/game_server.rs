@@ -128,9 +128,12 @@ impl GameServer {
 
         self.update_respawn(delta_time);
 
+        self.lag_compensator
+            .record_tick(self.current_tick, &self.players);
+
         let disconnected_clients = self.cleanup_disconnected_clients();
 
-        self.input_queue.clear();
+        self.current_tick += 1;
 
         disconnected_clients
     }
@@ -157,14 +160,15 @@ impl GameServer {
                 self.handle_shoot(*player_id, &input);
             }
         }
+
+        self.input_queue.clear();
     }
 
     fn handle_shoot(&mut self, shooter_id: PlayerId, input: &ClientInput) {
         let Some(shooter) = self.players.get(&shooter_id) else {
+            println!("shooter not found with id = {}", shooter_id);
             return;
         };
-
-        let rewound_positions = self.lag_compensator.rewind_to_time(input.prediected_time);
 
         // TODO: check if bullet_id already exist
         let bullet_id = self.next_bullet_id;
@@ -179,6 +183,13 @@ impl GameServer {
             velocity: shooter_dir * BULLET_SPEED,
             spawn_tick: self.current_tick,
             damage: BULLET_DAMAGE,
+        };
+
+        let Some(rewound_positions) = self.lag_compensator.rewind_to_time(input.predicted_time)
+        else {
+            // Cannot check instant hit, spawn the bullet projectile
+            self.bullets.push(bullet);
+            return;
         };
 
         if let Some(target_id) = self.check_instant_hit(shooter_id, &bullet, &rewound_positions) {
