@@ -82,7 +82,12 @@ impl GameClient {
         Ok(())
     }
 
-    pub fn send_input(&mut self, move_direction: Vec2, shoot: bool) -> anyhow::Result<()> {
+    pub fn send_input(
+        &mut self,
+        move_direction: MoveDirection,
+        rotation: f32,
+        shoot: bool,
+    ) -> anyhow::Result<()> {
         if !self.connected {
             bail!("Client not connected yet")
         }
@@ -93,6 +98,7 @@ impl GameClient {
             prediected_time,
             sequence: self.next_input_sequence,
             move_direction,
+            rotation,
             shoot,
         };
         self.next_input_sequence += 1;
@@ -105,10 +111,10 @@ impl GameClient {
             local_player.apply_movement(&input, TICK_DURATION.as_secs_f32());
         }
 
-        // // Send to server
-        // let packet = ClientPacket::Input(input);
-        // let packet_encoded = bincode::serde::encode_to_vec(packet, self.bincode_cfg)?;
-        // self.socket.send_to(&packet_encoded, self.server_addr)?;
+        // Send to server
+        let packet = ClientPacket::Input(input);
+        let packet_encoded = bincode::serde::encode_to_vec(packet, self.bincode_cfg)?;
+        self.socket.send_to(&packet_encoded, self.server_addr)?;
 
         Ok(())
     }

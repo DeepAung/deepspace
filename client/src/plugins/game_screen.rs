@@ -5,8 +5,13 @@ use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
 use bevy::sprite_render::{Material2d, Material2dPlugin};
 use bevy::time::common_conditions::on_timer;
-use shared::{BulletId, PlayerId, TICK_DURATION, WORLD_HEIGHT, WORLD_WIDTH};
+use bevy::window::PrimaryWindow;
+use shared::{
+    BulletId, ClientInput, MoveDirection, PlayerId, TICK_DURATION, WORLD_HEIGHT, WORLD_WIDTH,
+};
 use std::collections::HashMap;
+use std::f32::consts::PI;
+use std::time::SystemTime;
 
 use crate::plugins::{GameState, network::NetworkClient};
 
@@ -146,30 +151,39 @@ fn update_camera(
 fn handle_input(
     kb_input: Res<ButtonInput<KeyCode>>,
     mouse_input: Res<ButtonInput<MouseButton>>,
+    window: Single<&Window, With<PrimaryWindow>>,
     mut network_client: ResMut<NetworkClient>,
+    mut last_rotation: Local<f32>,
 ) {
-    let mut direction = shared::Vec2::new(0.0, 0.0);
+    let rotation = match window.cursor_position() {
+        Some(mouse_position) => {
+            let center_position = Vec2::new(window.width() / 2.0, window.height() / 2.0);
 
-    if kb_input.pressed(KeyCode::KeyW) {
-        direction.y += 1.;
-    }
+            let mut direction = mouse_position - center_position;
+            direction.y = -direction.y; // Flip y axis so that Y increase when go upward
 
-    if kb_input.pressed(KeyCode::KeyS) {
-        direction.y -= 1.;
-    }
+            let angle = direction.to_angle();
 
-    if kb_input.pressed(KeyCode::KeyA) {
-        direction.x -= 1.;
-    }
+            *last_rotation = angle;
 
-    if kb_input.pressed(KeyCode::KeyD) {
-        direction.x += 1.;
-    }
+            angle
+        }
+        None => *last_rotation,
+    };
 
     let shoot = mouse_input.just_pressed(MouseButton::Left);
 
-    println!("Gonna send input");
-    // network_client.send_input(direction, shoot).unwrap();
+    let move_direction = if kb_input.pressed(KeyCode::KeyW) {
+        MoveDirection::Forward
+    } else if kb_input.pressed(KeyCode::KeyS) {
+        MoveDirection::Backward
+    } else {
+        MoveDirection::None
+    };
+
+    network_client
+        .send_input(move_direction, rotation, shoot)
+        .unwrap();
 }
 
 fn render_game(
@@ -208,11 +222,8 @@ fn render_game(
 
     match local_player_query.single_mut() {
         Ok((_, mut transform)) => {
-            let angle = {
-                let vec = local_player_state.velocity;
-                atan2(vec.y, vec.x)
-            };
-            transform.rotation = Quat::from_rotation_z(angle);
+            info!("rotation: {:?}", local_player_state.rotation);
+            transform.rotation = Quat::from_rotation_z(local_player_state.rotation - PI / 2.0);
 
             let pos = local_player_state.position;
             transform.translation.x = pos.x;

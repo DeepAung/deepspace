@@ -147,7 +147,8 @@ pub struct PlayerState {
     pub id: PlayerId,
     pub name: String,
     pub position: Vec2,
-    pub velocity: Vec2,
+    pub velocity: f32, // can only move forward and backward based on the rotation
+    pub rotation: f32, // in radians
     pub health: i32,
     pub max_health: i32,
     pub score: u64,
@@ -161,7 +162,8 @@ impl PlayerState {
             id,
             name,
             position: spawn_pos,
-            velocity: Vec2::new(0.0, 0.0),
+            velocity: 0.0,
+            rotation: 0.0,
             health: max_health,
             max_health,
             score: 0,
@@ -171,18 +173,23 @@ impl PlayerState {
     }
 
     pub fn apply_movement(&mut self, input: &ClientInput, delta_time: f32) {
-        // Normalize movement direction
-        let move_dir = input.move_direction.normalized();
+        // Update rotation
+        self.rotation = input.rotation;
 
         // Apply velocity
-        self.velocity = Vec2::new(
-            move_dir.x * PLAYER_MOVE_SPEED,
-            move_dir.y * PLAYER_MOVE_SPEED,
-        );
+        let velocity_mul = match input.move_direction {
+            MoveDirection::Forward => 1.0,
+            MoveDirection::Backward => -1.0,
+            MoveDirection::None => 0.0,
+        };
+
+        self.velocity = PLAYER_MOVE_SPEED * velocity_mul;
 
         // Update position
-        self.position.x += self.velocity.x * delta_time;
-        self.position.y += self.velocity.y * delta_time;
+        let move_dir = Vec2::new(input.rotation.cos(), input.rotation.sin());
+
+        self.position.x += move_dir.x * self.velocity * delta_time;
+        self.position.y += move_dir.y * self.velocity * delta_time;
 
         // Clamp to world bounds
         self.position.x = self
@@ -225,8 +232,16 @@ pub struct ClientInput {
     pub prediected_time: SystemTime, // Client's predicted time
     pub sequence: SequenceNumber,    // Monotonic input sequence number
 
-    pub move_direction: Vec2,
+    pub move_direction: MoveDirection,
+    pub rotation: f32,
     pub shoot: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MoveDirection {
+    Forward,
+    Backward,
+    None,
 }
 
 // ===== Client & Server Packet ===== //

@@ -170,11 +170,13 @@ impl GameServer {
         let bullet_id = self.next_bullet_id;
         self.next_bullet_id += 1;
 
+        let shooter_dir = Vec2::new(shooter.rotation.cos(), shooter.rotation.sin());
+
         let bullet = BulletState {
             id: bullet_id,
             owner_id: shooter_id,
             position: shooter.position,
-            velocity: shooter.velocity.normalized() * BULLET_SPEED,
+            velocity: shooter_dir * BULLET_SPEED,
             spawn_tick: self.current_tick,
             damage: BULLET_DAMAGE,
         };
@@ -340,7 +342,8 @@ impl GameServer {
                     let new_time = *respawn_time - delta_time;
                     if new_time <= 0.0 {
                         player.position = Self::generate_spawn_pos();
-                        player.velocity = Vec2::new(0.0, 0.0);
+                        player.velocity = 0.0;
+                        player.rotation = 0.0;
                         player.health = player.max_health;
                         player.score = 0;
                         player.life = LifeState::Alive;

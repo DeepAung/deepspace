@@ -60,7 +60,7 @@ fn time_sync_system(network_client: Res<NetworkClient>) {
         return;
     }
 
-    info!("run time sync");
+    debug!("run time sync");
     if let Err(e) = network_client.time_sync() {
         // When closing the app, this error is expected. We just log it.
         warn!("Time sync failed: {:?}", e);
