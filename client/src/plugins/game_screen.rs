@@ -1,24 +1,30 @@
-use bevy::prelude::ops::atan;
+use bevy::ecs::query::QuerySingleError;
+use bevy::math::ops::atan2;
 use bevy::prelude::*;
-use shared::{BulletId, PlayerId, TIME_SYNC_DURATION};
+use bevy::render::render_resource::AsBindGroup;
+use bevy::shader::ShaderRef;
+use bevy::sprite_render::{Material2d, Material2dPlugin};
+use bevy::time::common_conditions::on_timer;
+use shared::{BulletId, PlayerId, TICK_DURATION, WORLD_HEIGHT, WORLD_WIDTH};
 use std::collections::HashMap;
 
-use crate::plugins::{GameState, NetworkClient, StreamReceiver};
+use crate::plugins::{GameState, network::NetworkClient};
 
 pub struct GameScreenPlugin;
 
 impl Plugin for GameScreenPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Time::<Fixed>::from_duration(TIME_SYNC_DURATION))
+        app.add_plugins(Material2dPlugin::<GridMaterial>::default())
             .add_systems(OnEnter(GameState::InGame), setup_game_screen)
             .add_systems(OnExit(GameState::InGame), teardown_game_screen)
             .add_systems(
                 Update,
-                (handle_input, render_game).run_if(in_state(GameState::InGame)),
-            )
-            .add_systems(
-                FixedUpdate,
-                time_sync_system.run_if(in_state(GameState::InGame)),
+                (
+                    handle_input.run_if(on_timer(TICK_DURATION)),
+                    update_camera,
+                    render_game,
+                )
+                    .run_if(in_state(GameState::InGame)),
             );
     }
 }
@@ -37,12 +43,14 @@ const OTHER_PLAYER_COLOR: Color = Color::srgb(1.0, 0.0, 0.0);
 const MY_BULLET_COLOR: Color = Color::srgb(0.0, 0.0, 1.0);
 const OTHER_BULLET_COLOR: Color = Color::srgb(1.0, 0.0, 0.0);
 
-const PLAYER_LAYER: f32 = 10.0;
+const BACKGROUND_LAYER: f32 = 0.0;
 const BULLET_LAYER: f32 = 5.0;
+const PLAYER_LAYER: f32 = 10.0;
 
 // --- Components ---
+
 #[derive(Component)]
-struct GameScreenRoot;
+struct InGameObject;
 
 #[derive(Component)]
 struct LocalPlayer;
@@ -60,89 +68,176 @@ struct Bullet {
     id: BulletId,
 }
 
+// --- Materials ---
+
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+struct GridMaterial {
+    #[uniform(0)]
+    color: LinearRgba,
+    #[uniform(1)]
+    bg_color: LinearRgba,
+    #[uniform(2)]
+    grid_size: f32, // How many grid cells across the image
+    #[uniform(3)]
+    thickness: f32, // Thickness of the lines (0.0 to 1.0 relative to cell size)
+}
+
+impl Material2d for GridMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/grid_background.wgsl".into()
+    }
+}
+
 // --- Systems ---
 
 fn setup_game_screen(
     mut commands: Commands,
-    // mut meshes: ResMut<Assets<Mesh>>,
-    // mut materials: ResMut<Assets<ColorMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut grid_materials: ResMut<Assets<GridMaterial>>,
     // network_client: Res<NetworkClient>,
 ) {
     info!("GAME STARTED!");
-    commands.spawn(GameScreenRoot).insert(Camera2d);
 
-    // TODO: setup UI like scoreboard, etc.
+    commands.spawn((
+        InGameObject,
+        Mesh2d(meshes.add(Rectangle::new(WORLD_WIDTH, WORLD_HEIGHT))),
+        MeshMaterial2d(grid_materials.add(background_material())),
+        Transform::from_xyz(0.0, 0.0, BACKGROUND_LAYER),
+    ));
 }
 
-fn teardown_game_screen(mut commands: Commands, query: Query<Entity, With<GameScreenRoot>>) {
+fn background_material() -> GridMaterial {
+    const LINE_COLOR: LinearRgba = LinearRgba::new(0.03, 0.03, 0.03, 1.0);
+    const BG_COLOR: LinearRgba = LinearRgba::new(0.0, 0.0, 0.0, 1.0);
+    const GRID_SIZE: f32 = 100.0;
+    const THICKNESS: f32 = 0.05;
+
+    GridMaterial {
+        color: LINE_COLOR,
+        bg_color: BG_COLOR,
+        grid_size: GRID_SIZE,
+        thickness: THICKNESS,
+    }
+}
+
+fn teardown_game_screen(mut commands: Commands, query: Query<Entity, With<InGameObject>>) {
     for entity in query.iter() {
         commands.entity(entity).despawn();
     }
 }
 
-fn handle_input(mut commands: Commands, query: Query<&LocalPlayer>) {}
+fn update_camera(
+    mut camera: Single<&mut Transform, (With<Camera2d>, Without<LocalPlayer>)>,
+    local_player: Single<&Transform, (With<LocalPlayer>, Without<Camera2d>)>,
+    time: Res<Time>,
+) {
+    const CAMERA_DECAY_RATE: f32 = 1.0;
+
+    let Vec3 { x, y, .. } = local_player.translation;
+    let direction = Vec3::new(x, y, camera.translation.z);
+
+    // Applies a smooth effect to camera movement using stable interpolation
+    // between the camera position and the player position on the x and y axes.
+    camera
+        .translation
+        .smooth_nudge(&direction, CAMERA_DECAY_RATE, time.delta_secs());
+}
+
+fn handle_input(
+    kb_input: Res<ButtonInput<KeyCode>>,
+    mouse_input: Res<ButtonInput<MouseButton>>,
+    mut network_client: ResMut<NetworkClient>,
+) {
+    let mut direction = shared::Vec2::new(0.0, 0.0);
+
+    if kb_input.pressed(KeyCode::KeyW) {
+        direction.y += 1.;
+    }
+
+    if kb_input.pressed(KeyCode::KeyS) {
+        direction.y -= 1.;
+    }
+
+    if kb_input.pressed(KeyCode::KeyA) {
+        direction.x -= 1.;
+    }
+
+    if kb_input.pressed(KeyCode::KeyD) {
+        direction.x += 1.;
+    }
+
+    let shoot = mouse_input.just_pressed(MouseButton::Left);
+
+    println!("Gonna send input");
+    // network_client.send_input(direction, shoot).unwrap();
+}
 
 fn render_game(
     mut commands: Commands,
-    receiver: Res<StreamReceiver>,
+    network_client: Res<NetworkClient>,
 
-    game_root_query: Query<Entity, With<GameScreenRoot>>,
-    mut local_player_query: Query<(Entity, &mut Transform), With<LocalPlayer>>,
+    mut camera: Single<&mut Transform, With<Camera2d>>,
+
+    mut local_player_query: Query<(Entity, &mut Transform), (With<LocalPlayer>, Without<Camera2d>)>,
     mut remote_players_query: Query<
         (Entity, &Player, &mut Transform),
-        (With<RemotePlayer>, Without<LocalPlayer>),
+        (With<RemotePlayer>, Without<Camera2d>, Without<LocalPlayer>),
     >,
     mut bullets_query: Query<
         (Entity, &Bullet, &mut Transform),
-        (With<Bullet>, Without<LocalPlayer>, Without<RemotePlayer>),
+        (
+            With<Bullet>,
+            Without<Camera2d>,
+            Without<LocalPlayer>,
+            Without<RemotePlayer>,
+        ),
     >,
 
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    let Some(state) = receiver.try_iter().last() else {
-        println!("state from rx");
-        return;
-    };
+    let state = network_client.get_render_state();
 
-    info!("get render state {:?}", state);
-
-    let Ok(game_root) = game_root_query.single() else {
-        println!("no game_root");
-        return;
-    };
+    println!("get render state {:?}", state);
 
     // --- LOCAL PLAYER ---
     let Some(local_player_state) = state.local_player else {
-        println!("no local_player");
+        debug!("no local_player");
         return;
     };
-
-    let offset_x = local_player_state.position.x;
-    let offset_y = local_player_state.position.y;
 
     match local_player_query.single_mut() {
         Ok((_, mut transform)) => {
             let angle = {
-                let vec = local_player_state.velocity.normalized();
-                atan(vec.y / vec.x)
+                let vec = local_player_state.velocity;
+                atan2(vec.y, vec.x)
             };
-            transform.rotate_z(angle);
+            transform.rotation = Quat::from_rotation_z(angle);
+
+            let pos = local_player_state.position;
+            transform.translation.x = pos.x;
+            transform.translation.y = pos.y;
         }
-        Err(_) => {
-            commands
-                .spawn((
-                    Player {
-                        id: local_player_state.id,
-                    },
-                    LocalPlayer,
-                    Mesh2d(meshes.add(SPACESHIP_SHAPE)),
-                    MeshMaterial2d(materials.add(MY_PLAYER_COLOR)),
-                    Transform::from_xyz(0.0, 0.0, PLAYER_LAYER),
-                ))
-                .set_parent_in_place(game_root);
+        Err(QuerySingleError::NoEntities(_)) => {
+            let pos = Vec2::new(local_player_state.position.x, local_player_state.position.y);
+            commands.spawn((
+                InGameObject,
+                Player {
+                    id: local_player_state.id,
+                },
+                LocalPlayer,
+                Mesh2d(meshes.add(SPACESHIP_SHAPE)),
+                MeshMaterial2d(materials.add(MY_PLAYER_COLOR)),
+                Transform::from_xyz(pos.x, pos.y, PLAYER_LAYER),
+            ));
+
+            camera.translation.x = pos.x;
+            camera.translation.y = pos.y;
         }
-    }
+        Err(QuerySingleError::MultipleEntities(_)) => {
+            panic!("There are multiple instances of LocalPlayer");
+        }
+    };
 
     // --- REMOTE PLAYERS ---
     // 1. Build a map of incoming data [PlayerId -> Position]
@@ -166,15 +261,14 @@ fn render_game(
 
     // 3. Spawn new entities (whatever is left in the map)
     for (id, pos) in remote_player_states {
-        commands
-            .spawn((
-                Player { id },
-                RemotePlayer,
-                Mesh2d(meshes.add(SPACESHIP_SHAPE)),
-                MeshMaterial2d(materials.add(OTHER_PLAYER_COLOR)),
-                Transform::from_xyz(pos.x - offset_x, pos.y - offset_y, PLAYER_LAYER),
-            ))
-            .set_parent_in_place(game_root);
+        commands.spawn((
+            InGameObject,
+            Player { id },
+            RemotePlayer,
+            Mesh2d(meshes.add(SPACESHIP_SHAPE)),
+            MeshMaterial2d(materials.add(OTHER_PLAYER_COLOR)),
+            Transform::from_xyz(pos.x, pos.y, PLAYER_LAYER),
+        ));
     }
 
     // --- BULLETS ---
@@ -204,28 +298,12 @@ fn render_game(
             OTHER_BULLET_COLOR
         };
 
-        commands
-            .spawn((
-                Bullet { id },
-                Mesh2d(meshes.add(BULLET_SHAPE)),
-                MeshMaterial2d(materials.add(color)),
-                Transform::from_xyz(pos.x, pos.y, BULLET_LAYER),
-            ))
-            .set_parent_in_place(game_root);
-    }
-}
-
-fn time_sync_system(_time: Res<Time<Fixed>>, network_client: Res<NetworkClient>) {
-    println!("run time_sync_system");
-    if let Ok(client) = network_client.client.lock() {
-        if !client.connected() {
-            return;
-        }
-        println!("ok time_sync_system");
-
-        if let Err(e) = client.time_sync(&network_client.socket) {
-            // When closing the app, this error is expected. We just log it.
-            warn!("Time sync failed: {:?}", e);
-        }
+        commands.spawn((
+            InGameObject,
+            Bullet { id },
+            Mesh2d(meshes.add(BULLET_SHAPE)),
+            MeshMaterial2d(materials.add(color)),
+            Transform::from_xyz(pos.x, pos.y, BULLET_LAYER),
+        ));
     }
 }

@@ -1,7 +1,7 @@
 use anyhow::bail;
 use crossbeam::channel::Sender;
 use std::net::{SocketAddr, UdpSocket};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use shared::*;
@@ -9,6 +9,7 @@ use shared::*;
 pub struct GameClient {
     // Connection
     server_addr: SocketAddr,
+    socket: Arc<UdpSocket>,
     player_id: Option<PlayerId>,
     connected: bool,
 
@@ -34,9 +35,10 @@ pub struct GameClient {
 }
 
 impl GameClient {
-    pub fn new(server_addr: SocketAddr) -> Self {
+    pub fn new(server_addr: SocketAddr, socket: Arc<UdpSocket>) -> Self {
         Self {
             server_addr,
+            socket,
             player_id: None,
             connected: false,
             bincode_cfg: bincode::config::standard(),
@@ -56,36 +58,31 @@ impl GameClient {
         self.connected
     }
 
-    pub fn connect(&mut self, socket: &UdpSocket, player_name: String) -> anyhow::Result<()> {
+    pub fn connect(&mut self, player_name: String) -> anyhow::Result<()> {
         if self.connected {
             bail!("Client already connected")
         }
 
         let packet = ClientPacket::Connect { player_name };
         let packet_encoded = bincode::serde::encode_to_vec(packet, self.bincode_cfg)?;
-        socket.send_to(&packet_encoded, self.server_addr)?;
+        self.socket.send_to(&packet_encoded, self.server_addr)?;
 
         Ok(())
     }
 
-    pub fn disconnect(&mut self, socket: &UdpSocket) -> anyhow::Result<()> {
+    pub fn disconnect(&mut self) -> anyhow::Result<()> {
         if !self.connected {
             bail!("Client not connected yet")
         }
 
         let packet = ClientPacket::Disconnect;
         let packet_encoded = bincode::serde::encode_to_vec(packet, self.bincode_cfg)?;
-        socket.send_to(&packet_encoded, self.server_addr)?;
+        self.socket.send_to(&packet_encoded, self.server_addr)?;
 
         Ok(())
     }
 
-    pub fn send_input(
-        &mut self,
-        socket: &UdpSocket,
-        move_direction: Vec2,
-        shoot: bool,
-    ) -> anyhow::Result<()> {
+    pub fn send_input(&mut self, move_direction: Vec2, shoot: bool) -> anyhow::Result<()> {
         if !self.connected {
             bail!("Client not connected yet")
         }
@@ -108,15 +105,15 @@ impl GameClient {
             local_player.apply_movement(&input, TICK_DURATION.as_secs_f32());
         }
 
-        // Send to server
-        let packet = ClientPacket::Input(input);
-        let packet_encoded = bincode::serde::encode_to_vec(packet, self.bincode_cfg)?;
-        socket.send_to(&packet_encoded, self.server_addr)?;
+        // // Send to server
+        // let packet = ClientPacket::Input(input);
+        // let packet_encoded = bincode::serde::encode_to_vec(packet, self.bincode_cfg)?;
+        // self.socket.send_to(&packet_encoded, self.server_addr)?;
 
         Ok(())
     }
 
-    pub fn time_sync(&self, socket: &UdpSocket) -> anyhow::Result<()> {
+    pub fn time_sync(&self) -> anyhow::Result<()> {
         if !self.connected {
             bail!("Client not connected yet")
         }
@@ -125,20 +122,15 @@ impl GameClient {
         let packet = ClientPacket::TimeSync { client_send_time };
         let packet_encoded = bincode::serde::encode_to_vec(packet, self.bincode_cfg)?;
 
-        socket.send_to(&packet_encoded, self.server_addr)?;
+        self.socket.send_to(&packet_encoded, self.server_addr)?;
 
         Ok(())
     }
 
-    pub fn recv_loop(
-        game_client: Arc<Mutex<GameClient>>,
-        socket: Arc<UdpSocket>,
-        tx: Sender<RenderState>,
-    ) {
+    pub fn recv_loop(socket: Arc<UdpSocket>, tx: Sender<(ServerPacket, SystemTime)>) {
         let mut buf = vec![0u8; MAX_PACKET_SIZE];
 
         loop {
-            println!("TRY RECV FROM BUF");
             match socket.recv_from(&mut buf) {
                 Ok((len, _)) => {
                     let client_recv_time = SystemTime::now();
@@ -154,43 +146,32 @@ impl GameClient {
                         }
                     };
 
-                    println!("Got server packet: {:?}", packet);
-
-                    let mut game_client = game_client.lock().unwrap();
-
-                    match packet {
-                        ServerPacket::ConnectionAccepted { player } => {
-                            game_client.handle_connection_accepted(player)
-                        }
-                        ServerPacket::ConnectionRejected { reason } => {
-                            game_client.handle_connection_rejected(reason)
-                        }
-                        ServerPacket::Disconnect { reason } => {
-                            game_client.handle_disconnect(reason)
-                        }
-                        ServerPacket::ViewSnapshot(view_snapshot) => {
-                            game_client.handle_snapshot(view_snapshot);
-                            let render_state = game_client.get_render_state();
-                            drop(game_client);
-
-                            tx.send(render_state).unwrap();
-                        }
-                        ServerPacket::TimeSync {
-                            client_send_time,
-                            server_recv_time,
-                            server_send_time,
-                        } => game_client.handle_time_sync(
-                            client_send_time,
-                            server_recv_time,
-                            server_send_time,
-                            client_recv_time,
-                        ),
-                    }
+                    // println!("Got server packet: {:?}", packet);
+                    tx.send((packet, client_recv_time)).unwrap();
                 }
                 Err(e) => {
                     eprintln!("Error receiving packet: {}", e);
                 }
             }
+        }
+    }
+
+    pub fn handle_packet(&mut self, packet: ServerPacket, client_recv_time: SystemTime) {
+        match packet {
+            ServerPacket::ConnectionAccepted { player } => self.handle_connection_accepted(player),
+            ServerPacket::ConnectionRejected { reason } => self.handle_connection_rejected(reason),
+            ServerPacket::Disconnect { reason } => self.handle_disconnect(reason),
+            ServerPacket::ViewSnapshot(view_snapshot) => self.handle_snapshot(view_snapshot),
+            ServerPacket::TimeSync {
+                client_send_time,
+                server_recv_time,
+                server_send_time,
+            } => self.handle_time_sync(
+                client_send_time,
+                server_recv_time,
+                server_send_time,
+                client_recv_time,
+            ),
         }
     }
 

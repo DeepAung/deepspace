@@ -1,31 +1,14 @@
 mod game_screen;
+mod network;
 mod welcome_screen;
 
+use bevy::camera::{ScalingMode, Viewport};
 use bevy::prelude::*;
-// Using crossbeam_channel instead of std as std `Receiver` is `!Sync`
-use crossbeam::channel::{Receiver, bounded};
-use std::net::{SocketAddr, UdpSocket};
-use std::sync::{Arc, Mutex};
+use bevy::window::{PrimaryWindow, WindowResolution};
 
-use crate::game_client::{GameClient, RenderState};
 use crate::plugins::game_screen::GameScreenPlugin;
+use crate::plugins::network::NetworkPlugin;
 use crate::plugins::welcome_screen::WelcomeScreenPlugin;
-
-// --- Resources ---
-#[derive(Resource, Clone)]
-struct NetworkClient {
-    pub socket: Arc<UdpSocket>,
-    pub client: Arc<Mutex<GameClient>>,
-}
-
-impl NetworkClient {
-    pub fn new(socket: Arc<UdpSocket>, client: Arc<Mutex<GameClient>>) -> Self {
-        Self { socket, client }
-    }
-}
-
-#[derive(Resource, Deref)]
-struct StreamReceiver(Receiver<RenderState>);
 
 // --- States ---
 #[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -35,29 +18,80 @@ enum GameState {
     InGame,
 }
 
+const TARGET_WIDTH: f32 = 1920.0;
+const TARGET_HEIGHT: f32 = 1080.0;
+
 pub fn init_game() -> anyhow::Result<()> {
-    let (tx, rx) = bounded::<RenderState>(1);
-
-    let server_addr: SocketAddr = "127.0.0.1:8080".parse().expect("Invalid address");
-    let game_client = Arc::new(Mutex::new(GameClient::new(server_addr)));
-
-    let client_socket = Arc::new(UdpSocket::bind("0.0.0.0:0")?);
-    println!("UDP client bound to: {}", client_socket.local_addr()?);
-
-    let loop_game_client = Arc::clone(&game_client);
-    let loop_client_socket = Arc::clone(&client_socket);
-    std::thread::spawn(|| {
-        GameClient::recv_loop(loop_game_client, loop_client_socket, tx);
-    });
-
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins(DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                resolution: WindowResolution::new(TARGET_WIDTH as u32, TARGET_HEIGHT as u32),
+                title: "Some Really Cool Title".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }))
+        .init_state::<GameState>()
+        .add_plugins(NetworkPlugin)
         .add_plugins(WelcomeScreenPlugin)
         .add_plugins(GameScreenPlugin)
-        .init_state::<GameState>()
-        .insert_resource(StreamReceiver(rx))
-        .insert_resource(NetworkClient::new(client_socket, game_client))
+        .add_systems(Startup, setup_camera)
+        .add_systems(Update, update_camera_viewport)
         .run();
 
     Ok(())
+}
+
+fn setup_camera(mut commands: Commands) {
+    let mut projection = OrthographicProjection::default_2d();
+    projection.scaling_mode = ScalingMode::FixedVertical {
+        viewport_height: TARGET_HEIGHT,
+    };
+
+    commands.spawn((Camera2d, Projection::Orthographic(projection)));
+}
+
+fn update_camera_viewport(
+    window: Single<&Window, With<PrimaryWindow>>,
+    mut camera: Single<&mut Camera>,
+    mut ui_scale: ResMut<UiScale>,
+) {
+    let win_w = window.physical_width();
+    let win_h = window.physical_height();
+
+    // 1. Calculate the "Safe Zone" (The size the game should be)
+    let target_ratio = TARGET_WIDTH / TARGET_HEIGHT;
+    let window_ratio = win_w as f32 / win_h as f32;
+
+    let viewport_w: u32;
+    let viewport_h: u32;
+
+    if window_ratio > target_ratio {
+        // Window is too wide (Black bars on left/right)
+        // Fix the height to the window height, calculate width based on ratio
+        viewport_h = win_h;
+        viewport_w = (win_h as f32 * target_ratio) as u32;
+    } else {
+        // Window is too tall (Black bars on top/bottom)
+        // Fix the width to the window width, calculate height based on ratio
+        viewport_w = win_w;
+        viewport_h = (win_w as f32 / target_ratio) as u32;
+    }
+
+    // 2. Calculate position to center the viewport (margin: auto)
+    // We use integer division here which is fine for pixels
+    let x = (win_w - viewport_w) / 2;
+    let y = (win_h - viewport_h) / 2;
+
+    // 3. Apply the Viewport to the camera
+    camera.viewport = Some(Viewport {
+        physical_position: UVec2::new(x, y),
+        physical_size: UVec2::new(viewport_w, viewport_h),
+        ..default()
+    });
+
+    // 4. Fix UI Scaling
+    // Since the camera view is now smaller than the window, we scale UI
+    // based on the VIEWPORT height, not the window height.
+    ui_scale.0 = viewport_h as f32 / TARGET_HEIGHT;
 }

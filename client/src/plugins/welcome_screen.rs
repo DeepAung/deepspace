@@ -1,15 +1,10 @@
-use std::net::UdpSocket;
-
 use bevy::prelude::*;
 use bevy_simple_text_input::{
     TextInput, TextInputPlugin, TextInputSubmitMessage, TextInputSystem, TextInputTextColor,
     TextInputTextFont, TextInputValue,
 };
 
-use crate::{
-    game_client::GameClient,
-    plugins::{GameState, NetworkClient},
-};
+use crate::plugins::{GameState, network::NetworkClient};
 
 pub struct WelcomeScreenPlugin;
 
@@ -37,7 +32,7 @@ const BACKGROUND_COLOR: Color = Color::srgb(0.15, 0.15, 0.15);
 
 // --- Components ---
 #[derive(Component)]
-struct WelcomeScreenRoot;
+struct WelcomeObject;
 
 #[derive(Component)]
 struct StartButton;
@@ -47,10 +42,9 @@ struct PlayerNameTextInput;
 
 // --- Systems ---
 fn setup_welcome_screen(mut commands: Commands) {
-    commands
-        .spawn(WelcomeScreenRoot)
-        .insert(Camera2d)
-        .insert(Node {
+    commands.spawn((
+        WelcomeObject,
+        Node {
             width: Val::Percent(100.0),
             height: Val::Percent(100.0),
             display: Display::Flex,
@@ -59,11 +53,11 @@ fn setup_welcome_screen(mut commands: Commands) {
             justify_content: JustifyContent::Center,
             column_gap: Val::Vh(5.0),
             ..Default::default()
-        })
-        .with_children(|parent| {
-            parent.spawn(Text::new("Enter you name"));
-
-            parent.spawn(PlayerNameTextInput).insert((
+        },
+        children![
+            Text::new("Enter you name"),
+            (
+                PlayerNameTextInput,
                 Node {
                     width: Val::Px(200.0),
                     border: UiRect::all(Val::Px(5.0)),
@@ -79,9 +73,9 @@ fn setup_welcome_screen(mut commands: Commands) {
                     ..default()
                 }),
                 TextInputTextColor(TextColor(TEXT_COLOR)),
-            ));
-
-            parent.spawn(StartButton).insert((
+            ),
+            (
+                StartButton,
                 Button,
                 Node {
                     width: px(150),
@@ -99,25 +93,26 @@ fn setup_welcome_screen(mut commands: Commands) {
                     TextColor(Color::srgb(0.9, 0.9, 0.9)),
                     TextShadow::default(),
                 )],
-            ));
-        });
+            )
+        ],
+    ));
 }
 
-fn teardown_welcome_screen(mut commands: Commands, query: Query<Entity, With<WelcomeScreenRoot>>) {
+fn teardown_welcome_screen(mut commands: Commands, query: Query<Entity, With<WelcomeObject>>) {
     for entity in query.iter() {
         commands.entity(entity).despawn();
     }
 }
 
-fn listener(mut events: MessageReader<TextInputSubmitMessage>, network_client: Res<NetworkClient>) {
+fn listener(
+    mut events: MessageReader<TextInputSubmitMessage>,
+    mut network_client: ResMut<NetworkClient>,
+) {
     for event in events.read() {
         let player_name = &event.value;
         info!("'Enter' key submitted: {}", player_name);
 
-        // Lock the mutex to access the GameClient
-        if let Ok(mut client) = network_client.client.lock() {
-            try_connect(&mut client, &network_client.socket, player_name.clone());
-        }
+        try_connect(&mut network_client, player_name.clone());
     }
 }
 
@@ -126,7 +121,7 @@ fn button_system(
     interaction_query: Query<&Interaction, (Changed<Interaction>, With<StartButton>)>,
     // 2. Query the TextInput value. We use `With<PlayerNameTextInput>` to find the specific box.
     mut text_input_query: Query<&mut TextInputValue, With<PlayerNameTextInput>>,
-    network_client: Res<NetworkClient>,
+    mut network_client: ResMut<NetworkClient>,
 ) {
     for interaction in interaction_query.iter() {
         if *interaction == Interaction::Pressed {
@@ -137,9 +132,7 @@ fn button_system(
                 info!("Start Button clicked: {}", player_name);
 
                 // Same connection logic as the listener
-                if let Ok(mut client) = network_client.client.lock() {
-                    try_connect(&mut client, &network_client.socket, player_name.clone());
-                }
+                try_connect(&mut network_client, player_name.clone());
             } else {
                 warn!("Start button clicked, but could not find the text input!");
             }
@@ -147,24 +140,20 @@ fn button_system(
     }
 }
 
-fn try_connect(client: &mut GameClient, socket: &UdpSocket, player_name: String) {
-    if client.connected() {
+fn try_connect(network_client: &mut NetworkClient, player_name: String) {
+    if network_client.connected() {
         return;
     }
 
-    client.connect(&socket, player_name).unwrap();
+    network_client.connect(player_name).unwrap();
 }
 
 fn check_connection_status(
     network_client: Res<NetworkClient>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
-    // TODO: this might deadlock
-    println!("check_connection_status");
-    if let Ok(client) = network_client.client.lock() {
-        if client.connected() {
-            info!("Connection successful! Switching to Game state.");
-            next_state.set(GameState::InGame);
-        }
+    if network_client.connected() {
+        info!("Connection successful! Switching to Game state.");
+        next_state.set(GameState::InGame);
     }
 }
