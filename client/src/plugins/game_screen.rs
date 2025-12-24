@@ -1,4 +1,5 @@
 use bevy::ecs::query::QuerySingleError;
+use bevy::pbr::MaterialBindGroupAllocator;
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
@@ -191,9 +192,12 @@ fn render_game(
 
     mut camera: Single<&mut Transform, With<Camera2d>>,
 
-    mut local_player_query: Query<(Entity, &mut Transform), (With<LocalPlayer>, Without<Camera2d>)>,
+    mut local_player_query: Query<
+        (Entity, &mut Transform, &mut Visibility),
+        (With<LocalPlayer>, Without<Camera2d>),
+    >,
     mut remote_players_query: Query<
-        (Entity, &Player, &mut Transform),
+        (Entity, &Player, &mut Transform, &mut Visibility),
         (With<RemotePlayer>, Without<Camera2d>, Without<LocalPlayer>),
     >,
     mut bullets_query: Query<
@@ -211,8 +215,6 @@ fn render_game(
 ) {
     let state = network_client.get_render_state();
 
-    // println!("get render state {:?}", state);
-
     // --- LOCAL PLAYER ---
     let Some(local_player_state) = state.local_player else {
         debug!("no local_player");
@@ -220,13 +222,23 @@ fn render_game(
     };
 
     match local_player_query.single_mut() {
-        Ok((_, mut transform)) => {
+        Ok((_, mut transform, mut visibility)) => {
             info!("rotation: {:?}", local_player_state.rotation);
             transform.rotation = Quat::from_rotation_z(local_player_state.rotation - PI / 2.0);
 
             let pos = local_player_state.position;
             transform.translation.x = pos.x;
             transform.translation.y = pos.y;
+
+            match local_player_state.life {
+                shared::LifeState::Alive => {
+                    *visibility = Visibility::Visible;
+                }
+                shared::LifeState::Dead { respawn_time } => {
+                    *visibility = Visibility::Hidden;
+                    // TODO: show screen "Respawn in {respawn_time}"
+                }
+            }
         }
         Err(QuerySingleError::NoEntities(_)) => {
             let pos = Vec2::new(local_player_state.position.x, local_player_state.position.y);
@@ -239,6 +251,7 @@ fn render_game(
                 Mesh2d(meshes.add(SPACESHIP_SHAPE)),
                 MeshMaterial2d(materials.add(MY_PLAYER_COLOR)),
                 Transform::from_xyz(pos.x, pos.y, PLAYER_LAYER),
+                Visibility::Visible,
             ));
 
             camera.translation.x = pos.x;
@@ -255,12 +268,22 @@ fn render_game(
         state.other_players.iter().map(|p| (p.id, p)).collect();
 
     // 2. Update or Despawn existing entities
-    for (entity, player, mut transform) in remote_players_query.iter_mut() {
+    for (entity, player, mut transform, mut visibility) in remote_players_query.iter_mut() {
         if let Some(&player_state) = remote_player_states.get(&player.id) {
             transform.rotation = Quat::from_rotation_z(player_state.rotation - PI / 2.0);
 
             transform.translation.x = player_state.position.x;
             transform.translation.y = player_state.position.y;
+
+            match local_player_state.life {
+                shared::LifeState::Alive => {
+                    *visibility = Visibility::Visible;
+                }
+                shared::LifeState::Dead { respawn_time } => {
+                    *visibility = Visibility::Hidden;
+                    // TODO: show screen "Respawn in {respawn_time}"
+                }
+            }
 
             // Remove from map so we know we processed it
             remote_player_states.remove(&player.id);
