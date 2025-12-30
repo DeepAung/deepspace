@@ -6,8 +6,8 @@ use bevy::sprite_render::{Material2d, Material2dPlugin};
 use bevy::time::common_conditions::on_timer;
 use bevy::window::PrimaryWindow;
 use shared::{
-    BulletId, BulletState, MoveDirection, PlayerId, PlayerState, TICK_DURATION, WORLD_HEIGHT,
-    WORLD_WIDTH,
+    BulletId, BulletState, LifeState, MoveDirection, PlayerId, PlayerState, TICK_DURATION,
+    WORLD_HEIGHT, WORLD_WIDTH,
 };
 use std::collections::HashMap;
 use std::f32::consts::PI;
@@ -25,7 +25,11 @@ impl Plugin for GameScreenPlugin {
             .add_systems(OnExit(GameState::InGame), teardown_game_screen)
             .add_systems(
                 Update,
-                (handle_input.run_if(on_timer(TICK_DURATION)), update_camera)
+                (
+                    handle_input.run_if(on_timer(TICK_DURATION)),
+                    update_camera,
+                    render_respawn_popup,
+                )
                     .run_if(in_state(GameState::InGame)),
             )
             .add_systems(
@@ -55,6 +59,7 @@ const MY_PLAYER_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
 const OTHER_PLAYER_COLOR: Color = Color::srgb(1.0, 0.0, 0.0);
 const MY_BULLET_COLOR: Color = Color::srgb(0.0, 0.0, 1.0);
 const OTHER_BULLET_COLOR: Color = Color::srgb(1.0, 0.0, 0.0);
+const POPUP_COLOR: Color = Color::srgba(0.0, 0.0, 0.0, 0.6);
 
 const BACKGROUND_LAYER: f32 = 0.0;
 const BULLET_LAYER: f32 = 5.0;
@@ -68,6 +73,12 @@ pub struct RenderStateResource(pub Option<RenderState>);
 
 #[derive(Component)]
 struct InGameObject;
+
+#[derive(Component)]
+struct RespawnPopup;
+
+#[derive(Component)]
+struct RespawnPopupText;
 
 #[derive(Component)]
 struct LocalPlayer;
@@ -116,15 +127,31 @@ fn setup_game_screen(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut grid_materials: ResMut<Assets<GridMaterial>>,
-    // network_client: Res<NetworkClient>,
 ) {
     info!("GAME STARTED!");
 
+    // Background
     commands.spawn((
         InGameObject,
         Mesh2d(meshes.add(Rectangle::new(WORLD_WIDTH, WORLD_HEIGHT))),
         MeshMaterial2d(grid_materials.add(background_material())),
         Transform::from_xyz(0.0, 0.0, BACKGROUND_LAYER),
+    ));
+
+    // Respawn Popup
+    commands.spawn((
+        InGameObject,
+        RespawnPopup,
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            display: Display::Flex,
+            align_items: AlignItems::Center,
+            justify_content: JustifyContent::Center,
+            ..Default::default()
+        },
+        BackgroundColor(POPUP_COLOR),
+        children![(Text::new("Respawn in X"), RespawnPopupText)],
     ));
 }
 
@@ -168,8 +195,19 @@ fn handle_input(
     mouse_input: Res<ButtonInput<MouseButton>>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut network_client: ResMut<NetworkClient>,
+    state: Res<RenderStateResource>,
+
     mut last_rotation: Local<f32>,
 ) {
+    // Ignore input if player is dead
+    if let Some(state) = &state.0 {
+        if let Some(local_player) = &state.local_player {
+            if matches!(local_player.life, LifeState::Dead { respawn_time: _ }) {
+                return;
+            }
+        }
+    }
+
     let rotation = match window.cursor_position() {
         Some(mouse_position) => {
             let center_position = Vec2::new(window.width() / 2.0, window.height() / 2.0);
@@ -427,4 +465,29 @@ fn update_bullet(bullet_state: &BulletState, transform: &mut Transform) {
 
     transform.translation.x = bullet_state.position.x;
     transform.translation.y = bullet_state.position.y;
+}
+
+fn render_respawn_popup(
+    state: Res<RenderStateResource>,
+
+    mut respawn_popup_visibility: Single<&mut Visibility, With<RespawnPopup>>,
+    mut respawn_popup_text: Single<&mut Text, With<RespawnPopupText>>,
+) {
+    let Some(state) = &state.0 else {
+        **respawn_popup_visibility = Visibility::Hidden;
+        return;
+    };
+
+    let Some(local_player) = &state.local_player else {
+        **respawn_popup_visibility = Visibility::Hidden;
+        return;
+    };
+
+    match local_player.life {
+        LifeState::Alive => **respawn_popup_visibility = Visibility::Hidden,
+        LifeState::Dead { respawn_time } => {
+            **respawn_popup_visibility = Visibility::Visible;
+            respawn_popup_text.0 = format!("Respawn in {:.1}", respawn_time);
+        }
+    }
 }
