@@ -1,5 +1,4 @@
 use bevy::ecs::query::QuerySingleError;
-use bevy::pbr::MaterialBindGroupAllocator;
 use bevy::prelude::*;
 use bevy::render::render_resource::AsBindGroup;
 use bevy::shader::ShaderRef;
@@ -13,6 +12,7 @@ use shared::{
 use std::collections::HashMap;
 use std::f32::consts::PI;
 
+use crate::game_client::RenderState;
 use crate::plugins::{GameState, network::NetworkClient};
 
 pub struct GameScreenPlugin;
@@ -20,15 +20,23 @@ pub struct GameScreenPlugin;
 impl Plugin for GameScreenPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(Material2dPlugin::<GridMaterial>::default())
+            .insert_resource(RenderStateResource(None))
             .add_systems(OnEnter(GameState::InGame), setup_game_screen)
             .add_systems(OnExit(GameState::InGame), teardown_game_screen)
             .add_systems(
                 Update,
+                (handle_input.run_if(on_timer(TICK_DURATION)), update_camera)
+                    .run_if(in_state(GameState::InGame)),
+            )
+            .add_systems(
+                Update,
                 (
-                    handle_input.run_if(on_timer(TICK_DURATION)),
-                    update_camera,
-                    render_game,
+                    update_render_state_resource,
+                    render_local_player,
+                    render_remote_players,
+                    render_bullets,
                 )
+                    .chain()
                     .run_if(in_state(GameState::InGame)),
             );
     }
@@ -52,6 +60,10 @@ const BACKGROUND_LAYER: f32 = 0.0;
 const BULLET_LAYER: f32 = 5.0;
 const PLAYER_LAYER: f32 = 10.0;
 
+// --- Resources ---
+#[derive(Resource, Deref)]
+pub struct RenderStateResource(pub Option<RenderState>);
+
 // --- Components ---
 
 #[derive(Component)]
@@ -62,6 +74,11 @@ struct LocalPlayer;
 
 #[derive(Component)]
 struct RemotePlayer;
+
+enum PlayerMarker {
+    Local,
+    Remote,
+}
 
 #[derive(Component)]
 struct Player {
@@ -141,8 +158,6 @@ fn update_camera(
     let Vec3 { x, y, .. } = local_player.translation;
     let direction = Vec3::new(x, y, camera.translation.z);
 
-    // Applies a smooth effect to camera movement using stable interpolation
-    // between the camera position and the player position on the x and y axes.
     camera
         .translation
         .smooth_nudge(&direction, CAMERA_DECAY_RATE, time.delta_secs());
@@ -186,83 +201,74 @@ fn handle_input(
         .unwrap();
 }
 
-fn render_game(
-    mut commands: Commands,
+fn update_render_state_resource(
     network_client: Res<NetworkClient>,
+    mut render_state_resource: ResMut<RenderStateResource>,
+) {
+    let render_state = network_client.get_render_state();
+    render_state_resource.0 = Some(render_state);
+}
+
+fn render_local_player(
+    mut commands: Commands,
+    state: Res<RenderStateResource>,
 
     mut camera: Single<&mut Transform, With<Camera2d>>,
-
     mut local_player_query: Query<
         (Entity, &mut Transform, &mut Visibility),
         (With<LocalPlayer>, Without<Camera2d>),
-    >,
-    mut remote_players_query: Query<
-        (Entity, &Player, &mut Transform, &mut Visibility),
-        (With<RemotePlayer>, Without<Camera2d>, Without<LocalPlayer>),
-    >,
-    mut bullets_query: Query<
-        (Entity, &Bullet, &mut Transform),
-        (
-            With<Bullet>,
-            Without<Camera2d>,
-            Without<LocalPlayer>,
-            Without<RemotePlayer>,
-        ),
     >,
 
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    let state = network_client.get_render_state();
+    let Some(state) = &state.0 else {
+        return;
+    };
 
-    // --- LOCAL PLAYER ---
-    let Some(local_player_state) = state.local_player else {
-        debug!("no local_player");
+    let Some(local_player_state) = &state.local_player else {
         return;
     };
 
     match local_player_query.single_mut() {
         Ok((_, mut transform, mut visibility)) => {
-            info!("rotation: {:?}", local_player_state.rotation);
-            transform.rotation = Quat::from_rotation_z(local_player_state.rotation - PI / 2.0);
-
-            let pos = local_player_state.position;
-            transform.translation.x = pos.x;
-            transform.translation.y = pos.y;
-
-            match local_player_state.life {
-                shared::LifeState::Alive => {
-                    *visibility = Visibility::Visible;
-                }
-                shared::LifeState::Dead { respawn_time } => {
-                    *visibility = Visibility::Hidden;
-                    // TODO: show screen "Respawn in {respawn_time}"
-                }
-            }
+            update_player(local_player_state, &mut transform, &mut visibility);
+            // TODO: show screen "Respawn in {respawn_time}" if local_player_state.life is Dead
         }
         Err(QuerySingleError::NoEntities(_)) => {
-            let pos = Vec2::new(local_player_state.position.x, local_player_state.position.y);
-            commands.spawn((
-                InGameObject,
-                Player {
-                    id: local_player_state.id,
-                },
-                LocalPlayer,
-                Mesh2d(meshes.add(SPACESHIP_SHAPE)),
-                MeshMaterial2d(materials.add(MY_PLAYER_COLOR)),
-                Transform::from_xyz(pos.x, pos.y, PLAYER_LAYER),
-                Visibility::Visible,
-            ));
+            create_player(
+                &mut commands,
+                local_player_state,
+                PlayerMarker::Local,
+                &mut meshes,
+                &mut materials,
+            );
 
-            camera.translation.x = pos.x;
-            camera.translation.y = pos.y;
+            camera.translation.x = local_player_state.position.x;
+            camera.translation.y = local_player_state.position.y;
         }
         Err(QuerySingleError::MultipleEntities(_)) => {
             panic!("There are multiple instances of LocalPlayer");
         }
     };
+}
 
-    // --- REMOTE PLAYERS ---
+fn render_remote_players(
+    mut commands: Commands,
+    state: Res<RenderStateResource>,
+
+    mut remote_players_query: Query<
+        (Entity, &Player, &mut Transform, &mut Visibility),
+        With<RemotePlayer>,
+    >,
+
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let Some(state) = &state.0 else {
+        return;
+    };
+
     // 1. Build a map of incoming data [PlayerId -> Position]
     let mut remote_player_states: HashMap<PlayerId, &PlayerState> =
         state.other_players.iter().map(|p| (p.id, p)).collect();
@@ -270,20 +276,7 @@ fn render_game(
     // 2. Update or Despawn existing entities
     for (entity, player, mut transform, mut visibility) in remote_players_query.iter_mut() {
         if let Some(&player_state) = remote_player_states.get(&player.id) {
-            transform.rotation = Quat::from_rotation_z(player_state.rotation - PI / 2.0);
-
-            transform.translation.x = player_state.position.x;
-            transform.translation.y = player_state.position.y;
-
-            match local_player_state.life {
-                shared::LifeState::Alive => {
-                    *visibility = Visibility::Visible;
-                }
-                shared::LifeState::Dead { respawn_time } => {
-                    *visibility = Visibility::Hidden;
-                    // TODO: show screen "Respawn in {respawn_time}"
-                }
-            }
+            update_player(player_state, &mut transform, &mut visibility);
 
             // Remove from map so we know we processed it
             remote_player_states.remove(&player.id);
@@ -293,22 +286,85 @@ fn render_game(
     }
 
     // 3. Spawn new entities (whatever is left in the map)
-    for (id, player_state) in remote_player_states {
-        commands.spawn((
-            InGameObject,
-            Player { id },
-            RemotePlayer,
-            Mesh2d(meshes.add(SPACESHIP_SHAPE)),
-            MeshMaterial2d(materials.add(OTHER_PLAYER_COLOR)),
-            Transform::from_xyz(
-                player_state.position.x,
-                player_state.position.y,
-                PLAYER_LAYER,
-            ),
-        ));
+    for (_, player_state) in remote_player_states {
+        create_player(
+            &mut commands,
+            player_state,
+            PlayerMarker::Remote,
+            &mut meshes,
+            &mut materials,
+        );
     }
+}
 
-    // --- BULLETS ---
+fn create_player(
+    commands: &mut Commands,
+    player_state: &PlayerState,
+    player_marker: PlayerMarker,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<ColorMaterial>>,
+) {
+    let player_color = match player_marker {
+        PlayerMarker::Local => MY_PLAYER_COLOR,
+        PlayerMarker::Remote => OTHER_PLAYER_COLOR,
+    };
+
+    let mut entity = commands.spawn((
+        InGameObject,
+        Player {
+            id: player_state.id,
+        },
+        Mesh2d(meshes.add(SPACESHIP_SHAPE)),
+        MeshMaterial2d(materials.add(player_color)),
+        Transform::from_xyz(
+            player_state.position.x,
+            player_state.position.y,
+            PLAYER_LAYER,
+        ),
+    ));
+
+    match player_marker {
+        PlayerMarker::Local => entity.insert(LocalPlayer),
+        PlayerMarker::Remote => entity.insert(RemotePlayer),
+    };
+}
+
+fn update_player(
+    player_state: &PlayerState,
+    transform: &mut Transform,
+    visibility: &mut Visibility,
+) {
+    // Update rotation
+    transform.rotation = Quat::from_rotation_z(player_state.rotation - PI / 2.0);
+
+    // Update translation
+    transform.translation.x = player_state.position.x;
+    transform.translation.y = player_state.position.y;
+
+    // Update visibility
+    *visibility = match player_state.life {
+        shared::LifeState::Alive => Visibility::Visible,
+        shared::LifeState::Dead { respawn_time: _ } => Visibility::Hidden,
+    };
+}
+
+fn render_bullets(
+    mut commands: Commands,
+    state: Res<RenderStateResource>,
+
+    mut bullets_query: Query<(Entity, &Bullet, &mut Transform), With<Bullet>>,
+
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    let Some(state) = &state.0 else {
+        return;
+    };
+
+    let Some(local_player_state) = &state.local_player else {
+        return;
+    };
+
     // 1. Build map [BulletId -> (Position, OwnerId)]
     let mut bullet_states: HashMap<BulletId, &BulletState> =
         state.bullets.iter().map(|b| (b.id, b)).collect();
@@ -316,11 +372,7 @@ fn render_game(
     // 2. Update or Despawn existing
     for (entity, bullet, mut transform) in bullets_query.iter_mut() {
         if let Some(bullet_state) = bullet_states.get(&bullet.id) {
-            let rotation = Vec2::new(bullet_state.velocity.x, bullet_state.velocity.y).to_angle();
-            transform.rotation = Quat::from_rotation_z(rotation - PI / 2.0);
-
-            transform.translation.x = bullet_state.position.x;
-            transform.translation.y = bullet_state.position.y;
+            update_bullet(bullet_state, &mut transform);
 
             bullet_states.remove(&bullet.id);
         } else {
@@ -329,24 +381,50 @@ fn render_game(
     }
 
     // 3. Spawn new
-    for (id, bullet_state) in bullet_states {
-        // Determine color based on owner
-        let color = if bullet_state.owner_id == local_player_state.id {
-            MY_BULLET_COLOR
-        } else {
-            OTHER_BULLET_COLOR
-        };
-
-        commands.spawn((
-            InGameObject,
-            Bullet { id },
-            Mesh2d(meshes.add(BULLET_SHAPE)),
-            MeshMaterial2d(materials.add(color)),
-            Transform::from_xyz(
-                bullet_state.position.x,
-                bullet_state.position.y,
-                BULLET_LAYER,
-            ),
-        ));
+    for (_, bullet_state) in bullet_states {
+        create_bullet(
+            &mut commands,
+            local_player_state.id,
+            bullet_state,
+            &mut meshes,
+            &mut materials,
+        );
     }
+}
+
+fn create_bullet(
+    commands: &mut Commands,
+    local_player_id: PlayerId,
+    bullet_state: &BulletState,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<ColorMaterial>>,
+) {
+    // Determine color based on owner
+    let color = if bullet_state.owner_id == local_player_id {
+        MY_BULLET_COLOR
+    } else {
+        OTHER_BULLET_COLOR
+    };
+
+    commands.spawn((
+        InGameObject,
+        Bullet {
+            id: bullet_state.id,
+        },
+        Mesh2d(meshes.add(BULLET_SHAPE)),
+        MeshMaterial2d(materials.add(color)),
+        Transform::from_xyz(
+            bullet_state.position.x,
+            bullet_state.position.y,
+            BULLET_LAYER,
+        ),
+    ));
+}
+
+fn update_bullet(bullet_state: &BulletState, transform: &mut Transform) {
+    let rotation = Vec2::new(bullet_state.velocity.x, bullet_state.velocity.y).to_angle();
+    transform.rotation = Quat::from_rotation_z(rotation - PI / 2.0);
+
+    transform.translation.x = bullet_state.position.x;
+    transform.translation.y = bullet_state.position.y;
 }
