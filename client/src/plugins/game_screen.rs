@@ -441,7 +441,7 @@ fn create_player(
     player_entity.with_children(|parent| {
         // Name Text
         parent.spawn((
-            Text2d::new(&player_state.name),
+            Text2d::new(format!("{} #{}", &player_state.name, player_state.id)),
             TextLayout::new_with_justify(Justify::Center),
             TextFont {
                 font_size: 14.0,
@@ -659,7 +659,7 @@ fn update_scoreboard(
             },
         ));
 
-        for entry in score_entries {
+        for (index, entry) in score_entries.iter().enumerate() {
             // Row Container
             parent
                 .spawn(Node {
@@ -671,7 +671,12 @@ fn update_scoreboard(
                 .with_children(|row| {
                     // Player Name
                     row.spawn((
-                        Text::new(format!("#{} PLAYER_NAME_HERE", entry.player_id)),
+                        Text::new(format!(
+                            "{}) {} #{}",
+                            index + 1,
+                            entry.player_name,
+                            entry.player_id,
+                        )),
                         TextFont {
                             font_size: 16.0,
                             ..default()

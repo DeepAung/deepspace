@@ -429,6 +429,7 @@ impl GameServer {
         for player in self.players.values() {
             let entry = ScoreEntry {
                 player_id: player.id,
+                player_name: player.name.clone(),
                 score: player.score,
             };
 

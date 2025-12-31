@@ -296,6 +296,7 @@ impl ClientConnection {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ScoreEntry {
     pub player_id: PlayerId,
+    pub player_name: String,
     pub score: u64,
 }
 
