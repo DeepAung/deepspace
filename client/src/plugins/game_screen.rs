@@ -17,6 +17,10 @@ use crate::plugins::{GameState, network::NetworkClient};
 
 pub struct GameScreenPlugin;
 
+// TODO: add exit button
+// TODO: disconnect on close window
+// TODO: add font
+
 impl Plugin for GameScreenPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(Material2dPlugin::<GridMaterial>::default())
