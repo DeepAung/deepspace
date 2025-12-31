@@ -6,8 +6,8 @@ use bevy::sprite_render::{Material2d, Material2dPlugin};
 use bevy::time::common_conditions::on_timer;
 use bevy::window::PrimaryWindow;
 use shared::{
-    BulletId, BulletState, LifeState, MoveDirection, PlayerId, PlayerState, TICK_DURATION,
-    WORLD_HEIGHT, WORLD_WIDTH,
+    BulletId, BulletState, LifeState, MoveDirection, PlayerId, PlayerState, ScoreEntry,
+    TICK_DURATION, WORLD_HEIGHT, WORLD_WIDTH,
 };
 use std::collections::HashMap;
 use std::f32::consts::PI;
@@ -41,6 +41,7 @@ impl Plugin for GameScreenPlugin {
                     render_bullets,
                     update_health_bars_position,
                     update_health_bars_value,
+                    update_scoreboard,
                 )
                     .chain()
                     .run_if(in_state(GameState::InGame)),
@@ -125,6 +126,9 @@ struct Billboard {
     offset: Vec2,
 }
 
+#[derive(Component)]
+pub struct Scoreboard(Vec<ScoreEntry>);
+
 // --- Materials ---
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
@@ -176,6 +180,27 @@ fn setup_game_screen(
         },
         BackgroundColor(POPUP_COLOR),
         children![(Text::new("Respawn in X"), RespawnPopupText)],
+    ));
+
+    // Scoreboard
+    commands.spawn((
+        InGameObject,
+        Scoreboard(Vec::new()),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(32.0),
+            right: Val::Px(32.0),
+
+            width: Val::Px(300.0),
+            height: Val::Auto,
+
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(8.0),
+            align_items: AlignItems::Start,
+            justify_content: JustifyContent::Center,
+            ..Default::default()
+        },
     ));
 }
 
@@ -603,6 +628,69 @@ fn update_health_bars_value(
             }
         }
     }
+}
+
+fn update_scoreboard(
+    mut commands: Commands,
+    state: Res<RenderStateResource>,
+    scoreboard_entity: Single<Entity, With<Scoreboard>>,
+) {
+    let Some(state) = &state.0 else {
+        return;
+    };
+
+    commands.entity(*scoreboard_entity).despawn_children();
+
+    let score_entries = state.scoreboard.clone();
+
+    // 4. Spawn new rows
+    commands.entity(*scoreboard_entity).with_children(|parent| {
+        // Title Header
+        parent.spawn((
+            Text::new("Scoreboard"),
+            TextFont {
+                font_size: 20.0,
+                ..default()
+            },
+            Node {
+                align_self: AlignSelf::Center,
+                margin: UiRect::bottom(Val::Px(8.0)),
+                ..default()
+            },
+        ));
+
+        for entry in score_entries {
+            // Row Container
+            parent
+                .spawn(Node {
+                    width: Val::Percent(100.0),
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    ..default()
+                })
+                .with_children(|row| {
+                    // Player Name
+                    row.spawn((
+                        Text::new(format!("#{} PLAYER_NAME_HERE", entry.player_id)),
+                        TextFont {
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(Color::WHITE),
+                    ));
+
+                    // Score Value
+                    row.spawn((
+                        Text::new(entry.score.to_string()),
+                        TextFont {
+                            font_size: 16.0,
+                            ..default()
+                        },
+                        TextColor(Color::srgb(0.0, 1.0, 0.0)),
+                    ));
+                });
+        }
+    });
 }
 
 fn render_respawn_popup(
