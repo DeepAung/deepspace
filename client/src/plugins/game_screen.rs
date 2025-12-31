@@ -110,13 +110,19 @@ struct Bullet {
 }
 
 #[derive(Component)]
-struct HealthBarUI {
-    pub player_entity: Entity,
+struct Health {
+    current: i32,
+    max: i32,
 }
 
 #[derive(Component)]
 struct HealthBarValue {
-    pub player_id: PlayerId,
+    player_entity: Entity,
+}
+
+#[derive(Component)]
+struct Billboard {
+    offset: Vec2,
 }
 
 // --- Materials ---
@@ -271,7 +277,7 @@ fn render_local_player(
 
     mut camera: Single<&mut Transform, With<Camera2d>>,
     mut local_player_query: Query<
-        (Entity, &mut Transform, &mut Visibility),
+        (&mut Health, &mut Transform, &mut Visibility),
         (With<LocalPlayer>, Without<Camera2d>),
     >,
 
@@ -287,8 +293,13 @@ fn render_local_player(
     };
 
     match local_player_query.single_mut() {
-        Ok((_, mut transform, mut visibility)) => {
-            update_player(local_player_state, &mut transform, &mut visibility);
+        Ok((mut health, mut transform, mut visibility)) => {
+            update_player(
+                local_player_state,
+                &mut health,
+                &mut transform,
+                &mut visibility,
+            );
         }
         Err(QuerySingleError::NoEntities(_)) => {
             create_player(
@@ -313,7 +324,13 @@ fn render_remote_players(
     state: Res<RenderStateResource>,
 
     mut remote_players_query: Query<
-        (Entity, &Player, &mut Transform, &mut Visibility),
+        (
+            Entity,
+            &Player,
+            &mut Health,
+            &mut Transform,
+            &mut Visibility,
+        ),
         With<RemotePlayer>,
     >,
 
@@ -329,9 +346,11 @@ fn render_remote_players(
         state.other_players.iter().map(|p| (p.id, p)).collect();
 
     // 2. Update or Despawn existing entities
-    for (entity, player, mut transform, mut visibility) in remote_players_query.iter_mut() {
+    for (entity, player, mut health, mut transform, mut visibility) in
+        remote_players_query.iter_mut()
+    {
         if let Some(&player_state) = remote_player_states.get(&player.id) {
-            update_player(player_state, &mut transform, &mut visibility);
+            update_player(player_state, &mut health, &mut transform, &mut visibility);
 
             // Remove from map so we know we processed it
             remote_player_states.remove(&player.id);
@@ -364,10 +383,19 @@ fn create_player(
         PlayerMarker::Remote => OTHER_PLAYER_COLOR,
     };
 
+    let health_bar_fg_color = match player_marker {
+        PlayerMarker::Local => MY_HEALTH_BAR_FG_COLOR,
+        PlayerMarker::Remote => OTHER_HEALTH_BAR_FG_COLOR,
+    };
+
     let mut player_entity = commands.spawn((
         InGameObject,
         Player {
             id: player_state.id,
+        },
+        Health {
+            current: player_state.health,
+            max: player_state.max_health,
         },
         Mesh2d(meshes.add(SPACESHIP_SHAPE)),
         MeshMaterial2d(materials.add(player_color)),
@@ -385,125 +413,57 @@ fn create_player(
 
     let player_entity_id = player_entity.id();
 
-    let health_bar_fg_color = match player_marker {
-        PlayerMarker::Local => MY_HEALTH_BAR_FG_COLOR,
-        PlayerMarker::Remote => OTHER_HEALTH_BAR_FG_COLOR,
-    };
+    player_entity.with_children(|parent| {
+        // Name Text
+        parent.spawn((
+            Text2d::new(&player_state.name),
+            TextLayout::new_with_justify(Justify::Center),
+            TextFont {
+                font_size: 14.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+            Transform::from_xyz(0.0, 55.0, PLAYER_INFO_LAYER),
+            Billboard {
+                offset: Vec2::new(0.0, 55.0),
+            },
+        ));
 
-    commands.spawn((
-        HealthBarUI {
-            player_entity: player_entity_id,
-        },
-        Transform::default(),
-        children![
-            // Name Text
-            (
-                Text2d::new(&player_state.name),
-                TextLayout::new_with_justify(Justify::Center),
-                TextFont {
-                    font_size: 14.0,
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                Transform::from_xyz(0.0, 55.0, PLAYER_INFO_LAYER),
-            ),
-            // Health Bar Background
-            (
-                Mesh2d(meshes.add(Rectangle::from_size(HEALTH_BAR_SIZE))),
-                MeshMaterial2d(materials.add(HEALTH_BAR_BG_COLOR)),
-                Transform::from_xyz(0.0, 40.0, PLAYER_INFO_LAYER),
-            ),
-            // Health Bar Foreground
-            (
-                HealthBarValue {
-                    player_id: player_state.id
-                },
-                Mesh2d(meshes.add(Rectangle::from_size(HEALTH_BAR_SIZE))),
-                MeshMaterial2d(materials.add(health_bar_fg_color)),
-                Transform::from_xyz(0.0, 40.0, PLAYER_INFO_LAYER + 0.1),
-            ),
-        ],
-    ));
-}
+        // Health Bar Background
+        parent.spawn((
+            Mesh2d(meshes.add(Rectangle::from_size(HEALTH_BAR_SIZE))),
+            MeshMaterial2d(materials.add(HEALTH_BAR_BG_COLOR)),
+            Transform::from_xyz(0.0, 40.0, PLAYER_INFO_LAYER),
+            Billboard {
+                offset: Vec2::new(0.0, 40.0),
+            },
+        ));
 
-fn update_health_bars_position(
-    mut commands: Commands,
-    player_query: Query<&Transform, With<Player>>,
-    mut health_bar_ui_query: Query<
-        (Entity, &HealthBarUI, &mut Transform),
-        (With<HealthBarUI>, Without<Player>),
-    >,
-) {
-    for (health_bar_entity, health_bar_ui, mut health_bar_transform) in
-        health_bar_ui_query.iter_mut()
-    {
-        match player_query.get(health_bar_ui.player_entity) {
-            Ok(player_transform) => {
-                health_bar_transform.translation.x = player_transform.translation.x;
-                health_bar_transform.translation.y = player_transform.translation.y;
-            }
-            Err(_) => {
-                // Remove health bar if player died/disconnected
-                commands.entity(health_bar_entity).despawn();
-            }
-        }
-    }
-}
-
-fn update_health_bars_value(
-    state: Res<RenderStateResource>,
-
-    mut health_bar_value_query: Query<
-        (&HealthBarValue, &mut Transform),
-        (With<HealthBarValue>, Without<Player>),
-    >,
-) {
-    let Some(render_state) = &state.0 else {
-        return;
-    };
-
-    let capacity = render_state.other_players.len() + 1;
-    let mut player_data = HashMap::with_capacity(capacity);
-
-    // Populate Map (Local + Remote)
-    if let Some(p) = &render_state.local_player {
-        player_data.insert(p.id, (p.health, p.max_health));
-    }
-    for p in &render_state.other_players {
-        player_data.insert(p.id, (p.health, p.max_health));
-    }
-
-    // Update Bars
-    for (bar_info, mut transform) in health_bar_value_query.iter_mut() {
-        if let Some(&(health, max_health)) = player_data.get(&bar_info.player_id) {
-            // Prevent division by zero
-            if max_health == 0 {
-                continue;
-            }
-
-            let target_scale = (health as f32 / max_health as f32).clamp(0.0, 1.0);
-
-            // Optimization: Only write to Transform if value actually changed.
-            // This prevents Bevy from triggering "Changed<Transform>" updates unnecessarily.
-            if (transform.scale.x - target_scale).abs() > f32::EPSILON {
-                transform.scale.x = target_scale;
-
-                // Visual Fix: Mesh2d scales from the Center.
-                // To make it look like it's shrinking from Right-to-Left (Anchored Left),
-                // we must shift the position slightly as it gets smaller.
-                // Formula: shift = (OriginalWidth * Scale - OriginalWidth) / 2.0
-                let shift = (HEALTH_BAR_SIZE.x * target_scale - HEALTH_BAR_SIZE.x) / 2.0;
-                transform.translation.x = shift;
-            }
-        }
-    }
+        // Health Bar Foreground
+        parent.spawn((
+            HealthBarValue {
+                player_entity: player_entity_id,
+            },
+            Mesh2d(meshes.add(Rectangle::from_size(HEALTH_BAR_SIZE))),
+            MeshMaterial2d(materials.add(health_bar_fg_color)),
+            Transform::from_xyz(0.0, 40.0, PLAYER_INFO_LAYER + 0.1),
+            Billboard {
+                offset: Vec2::new(0.0, 40.0),
+            },
+        ));
+    });
 }
 
 fn update_player(
     player_state: &PlayerState,
+    health: &mut Health,
     transform: &mut Transform,
     visibility: &mut Visibility,
 ) {
+    // Sync health data
+    health.current = player_state.health;
+    health.max = player_state.max_health;
+
     // Update rotation
     transform.rotation = Quat::from_rotation_z(player_state.rotation - PI / 2.0);
 
@@ -597,6 +557,52 @@ fn update_bullet(bullet_state: &BulletState, transform: &mut Transform) {
 
     transform.translation.x = bullet_state.position.x;
     transform.translation.y = bullet_state.position.y;
+}
+
+fn update_health_bars_position(
+    player_query: Query<(&Transform, &Children), (With<Player>, Changed<Transform>)>,
+    mut child_query: Query<(&mut Transform, &Billboard), Without<Player>>,
+) {
+    for (parent_transform, children) in player_query.iter() {
+        let inv_rotation = parent_transform.rotation.inverse();
+
+        for child in children.iter() {
+            if let Ok((mut child_transform, billboard)) = child_query.get_mut(child) {
+                child_transform.rotation = inv_rotation;
+
+                let z = child_transform.translation.z;
+                child_transform.translation =
+                    inv_rotation * Vec3::new(billboard.offset.x, billboard.offset.y, 0.0);
+                child_transform.translation.z = z;
+            }
+        }
+    }
+}
+
+fn update_health_bars_value(
+    mut health_bar_value_query: Query<
+        (&HealthBarValue, &mut Transform, &mut Billboard),
+        With<HealthBarValue>,
+    >,
+    player_query: Query<&Health, (With<Player>, Without<HealthBarValue>)>,
+) {
+    for (health_bar_value, mut transform, mut billboard) in health_bar_value_query.iter_mut() {
+        if let Ok(health) = player_query.get(health_bar_value.player_entity) {
+            let percent = (health.current as f32 / health.max as f32).clamp(0.0, 1.0);
+
+            // Only update if changed (optimization)
+            if (transform.scale.x - percent).abs() > f32::EPSILON {
+                transform.scale.x = percent;
+
+                // Visual Fix: Mesh2d scales from the Center.
+                // To make it look like it's shrinking from Right-to-Left (Anchored Left),
+                // we must shift the position slightly as it gets smaller.
+                // Formula: shift = (OriginalWidth * Scale - OriginalWidth) / 2.0
+                let shift = (HEALTH_BAR_SIZE.x * percent - HEALTH_BAR_SIZE.x) / 2.0;
+                billboard.offset.x = shift; // translation will reflect the billboard offset changed
+            }
+        }
+    }
 }
 
 fn render_respawn_popup(
