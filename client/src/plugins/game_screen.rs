@@ -176,7 +176,7 @@ fn setup_game_screen(
             display: Display::Flex,
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
-            ..Default::default()
+            ..default()
         },
         BackgroundColor(POPUP_COLOR),
         children![(Text::new("Respawn in X"), RespawnPopupText)],
@@ -199,7 +199,7 @@ fn setup_game_screen(
             row_gap: Val::Px(8.0),
             align_items: AlignItems::Start,
             justify_content: JustifyContent::Center,
-            ..Default::default()
+            ..default()
         },
     ));
 }

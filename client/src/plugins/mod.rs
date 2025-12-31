@@ -27,9 +27,9 @@ pub fn init_game() -> anyhow::Result<()> {
             primary_window: Some(Window {
                 resolution: WindowResolution::new(TARGET_WIDTH as u32, TARGET_HEIGHT as u32),
                 title: "Some Really Cool Title".to_string(),
-                ..Default::default()
+                ..default()
             }),
-            ..Default::default()
+            ..default()
         }))
         .init_state::<GameState>()
         .add_plugins(NetworkPlugin)

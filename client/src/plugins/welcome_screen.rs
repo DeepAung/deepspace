@@ -52,7 +52,7 @@ fn setup_welcome_screen(mut commands: Commands) {
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
             column_gap: Val::Vh(5.0),
-            ..Default::default()
+            ..default()
         },
         children![
             Text::new("Enter you name"),
