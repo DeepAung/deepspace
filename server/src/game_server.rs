@@ -356,7 +356,6 @@ impl GameServer {
                         player.velocity = 0.0;
                         player.rotation = 0.0;
                         player.health = player.max_health;
-                        player.score = 0;
                         player.life = LifeState::Alive;
                     } else {
                         *respawn_time = new_time;
