@@ -6,11 +6,12 @@ use bevy::sprite_render::{Material2d, Material2dPlugin};
 use bevy::time::common_conditions::on_timer;
 use bevy::window::PrimaryWindow;
 use shared::{
-    BulletId, BulletState, LifeState, MoveDirection, PlayerId, PlayerState, ScoreEntry,
-    TICK_DURATION, WORLD_HEIGHT, WORLD_WIDTH,
+    BulletId, BulletState, LifeState, MoveDirection, PlayerId, PlayerState, TICK_DURATION,
+    WORLD_HEIGHT, WORLD_WIDTH,
 };
 use std::collections::HashMap;
 use std::f32::consts::PI;
+use std::ops::DerefMut;
 
 use crate::game_client::RenderState;
 use crate::plugins::{GameState, network::NetworkClient};
@@ -46,6 +47,7 @@ impl Plugin for GameScreenPlugin {
                     update_health_bars_position,
                     update_health_bars_value,
                     update_scoreboard,
+                    update_latency_text,
                 )
                     .chain()
                     .run_if(in_state(GameState::InGame)),
@@ -133,7 +135,10 @@ struct Billboard {
 }
 
 #[derive(Component)]
-pub struct Scoreboard(Vec<ScoreEntry>);
+pub struct Scoreboard;
+
+#[derive(Component)]
+pub struct LatencyText;
 
 // --- Materials ---
 
@@ -205,22 +210,46 @@ fn setup_game_screen(
     // Scoreboard
     commands.spawn((
         InGameObject,
-        Scoreboard(Vec::new()),
         Node {
             position_type: PositionType::Absolute,
             top: Val::Px(32.0),
             right: Val::Px(32.0),
+            display: Display::Block,
 
             width: Val::Px(300.0),
             height: Val::Auto,
-
-            display: Display::Flex,
-            flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(8.0),
-            align_items: AlignItems::Start,
-            justify_content: JustifyContent::Center,
             ..default()
         },
+        children![
+            (
+                Scoreboard,
+                Node {
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(8.0),
+                    align_items: AlignItems::Start,
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                }
+            ),
+            (
+                LatencyText,
+                Text::new(""),
+                TextColor(Color::WHITE),
+                TextFont {
+                    font_size: 14.0,
+                    ..default()
+                },
+                TextLayout {
+                    justify: Justify::Right,
+                    ..default()
+                },
+                Node {
+                    margin: UiRect::top(Val::Px(8.0)),
+                    ..default()
+                }
+            ),
+        ],
     ));
 }
 
@@ -558,6 +587,31 @@ fn update_scoreboard(
                 });
         }
     });
+}
+
+fn update_latency_text(
+    network_client: Res<NetworkClient>,
+    mut latency_single: Single<(&mut Text, &mut TextColor), With<LatencyText>>,
+) {
+    let (text, color) = latency_single.deref_mut();
+
+    let round_trip_time = network_client.get_round_trip_time();
+    let latency_ms = round_trip_time * 1000.0;
+
+    text.0 = format!("latency {:.0} ms", latency_ms);
+    color.0 = latency_ms_to_color(latency_ms);
+}
+
+fn latency_ms_to_color(latency_ms: f64) -> Color {
+    const RED: Color = Color::srgb(1.0, 0.0, 0.0);
+    const YELLOW: Color = Color::srgb(1.0, 1.0, 0.0);
+    const GREEN: Color = Color::srgb(0.0, 1.0, 0.0);
+
+    match latency_ms {
+        n if n > 150.0 => RED,
+        n if n > 50.0 => YELLOW,
+        _ => GREEN,
+    }
 }
 
 fn render_respawn_popup(

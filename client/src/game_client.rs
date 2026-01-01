@@ -297,6 +297,10 @@ impl GameClient {
             scoreboard: self.scoreboard.clone(),
         }
     }
+
+    pub fn get_round_trip_time(&self) -> f64 {
+        self.round_trip_time
+    }
 }
 
 #[derive(Debug, Clone)]
