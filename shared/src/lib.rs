@@ -56,7 +56,7 @@ pub const VIEW_SIZE: Vec2 = Vec2::new(
 
 // ===== Other Constants ===== //
 pub const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
-pub const INTERPOLATION_DELAY: Duration = Duration::from_millis(100); // Client render delay
+pub const INTERPOLATION_DELAY: Duration = Duration::from_millis(50); // Client render delay
 pub const LAG_COMPENSATION_HISTORY: Duration = Duration::from_secs(5);
 pub const MAX_PACKET_SIZE: usize = 65535;
 
