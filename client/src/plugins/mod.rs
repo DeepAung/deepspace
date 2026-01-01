@@ -4,10 +4,10 @@ mod welcome_screen;
 
 use bevy::camera::{ScalingMode, Viewport};
 use bevy::prelude::*;
-use bevy::window::{PrimaryWindow, WindowResolution};
+use bevy::window::{PrimaryWindow, WindowCloseRequested, WindowResolution};
 
 use crate::plugins::game_screen::GameScreenPlugin;
-use crate::plugins::network::NetworkPlugin;
+use crate::plugins::network::{NetworkClient, NetworkPlugin};
 use crate::plugins::welcome_screen::WelcomeScreenPlugin;
 
 // --- States ---
@@ -24,6 +24,7 @@ const TARGET_HEIGHT: f32 = 1080.0;
 pub fn init_game() -> anyhow::Result<()> {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
+            close_when_requested: false,
             primary_window: Some(Window {
                 resolution: WindowResolution::new(TARGET_WIDTH as u32, TARGET_HEIGHT as u32),
                 title: "Some Really Cool Title".to_string(),
@@ -36,7 +37,7 @@ pub fn init_game() -> anyhow::Result<()> {
         .add_plugins(WelcomeScreenPlugin)
         .add_plugins(GameScreenPlugin)
         .add_systems(Startup, setup_camera)
-        .add_systems(Update, update_camera_viewport)
+        .add_systems(Update, (update_camera_viewport, disconnect_on_close_window))
         .run();
 
     Ok(())
@@ -94,4 +95,21 @@ fn update_camera_viewport(
     // Since the camera view is now smaller than the window, we scale UI
     // based on the VIEWPORT height, not the window height.
     ui_scale.0 = viewport_h as f32 / TARGET_HEIGHT;
+}
+
+fn disconnect_on_close_window(
+    mut commands: Commands,
+    mut events: MessageReader<WindowCloseRequested>,
+    mut network_client: ResMut<NetworkClient>,
+) {
+    for event in events.read() {
+        info!("graceful shutdown: disconnect the player");
+        if network_client.connected() {
+            if let Err(e) = network_client.disconnect() {
+                error!("Failed to disconnect: {:?}", e);
+            }
+        }
+
+        commands.entity(event.window).despawn();
+    }
 }

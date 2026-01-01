@@ -51,7 +51,7 @@ fn setup_welcome_screen(mut commands: Commands) {
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
-            column_gap: Val::Vh(5.0),
+            row_gap: Val::Px(8.0),
             ..default()
         },
         children![

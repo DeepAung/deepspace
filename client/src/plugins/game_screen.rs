@@ -11,15 +11,13 @@ use shared::{
 };
 use std::collections::HashMap;
 use std::f32::consts::PI;
-use std::ops::DerefMut;
+use std::ops::{Deref, DerefMut};
 
 use crate::game_client::RenderState;
 use crate::plugins::{GameState, network::NetworkClient};
 
 pub struct GameScreenPlugin;
 
-// TODO: add exit button
-// TODO: disconnect on close window
 // TODO: add font
 
 impl Plugin for GameScreenPlugin {
@@ -31,23 +29,18 @@ impl Plugin for GameScreenPlugin {
             .add_systems(
                 Update,
                 (
+                    exit_button_trigger,
                     handle_input.run_if(on_timer(TICK_DURATION)),
-                    update_camera,
-                    render_respawn_popup,
-                )
-                    .run_if(in_state(GameState::InGame)),
-            )
-            .add_systems(
-                Update,
-                (
                     update_render_state_resource,
                     render_local_player,
                     render_remote_players,
                     render_bullets,
+                    update_camera,
                     update_health_bars_position,
                     update_health_bars_value,
                     update_scoreboard,
                     update_latency_text,
+                    render_respawn_popup,
                 )
                     .chain()
                     .run_if(in_state(GameState::InGame)),
@@ -140,6 +133,9 @@ pub struct Scoreboard;
 #[derive(Component)]
 pub struct LatencyText;
 
+#[derive(Component)]
+pub struct ExitButton;
+
 // --- Materials ---
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
@@ -207,7 +203,7 @@ fn setup_game_screen(
         children![(Text::new("Respawn in X"), RespawnPopupText)],
     ));
 
-    // Scoreboard
+    // Top-Right Container
     commands.spawn((
         InGameObject,
         Node {
@@ -221,6 +217,7 @@ fn setup_game_screen(
             ..default()
         },
         children![
+            // Scoreboard
             (
                 Scoreboard,
                 Node {
@@ -232,6 +229,7 @@ fn setup_game_screen(
                     ..default()
                 }
             ),
+            // Latency Text
             (
                 LatencyText,
                 Text::new(""),
@@ -250,6 +248,32 @@ fn setup_game_screen(
                 }
             ),
         ],
+    ));
+
+    // Exit Button
+    commands.spawn((
+        InGameObject,
+        ExitButton,
+        Button,
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(32.0),
+            left: Val::Px(32.0),
+
+            display: Display::Flex,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+
+            width: px(100),
+            height: px(50),
+            border: UiRect::all(px(2.0)),
+
+            ..default()
+        },
+        BorderColor::all(Color::WHITE),
+        BorderRadius::MAX,
+        BackgroundColor(Color::BLACK),
+        children![(Text::new("< Exit"), TextColor(Color::WHITE))],
     ));
 }
 
@@ -318,9 +342,9 @@ fn handle_input(
         MoveDirection::None
     };
 
-    network_client
-        .send_input(move_direction, rotation, shoot)
-        .unwrap();
+    if let Err(e) = network_client.send_input(move_direction, rotation, shoot) {
+        error!("Failed to send input: {:?}", e);
+    }
 }
 
 fn update_render_state_resource(
@@ -783,4 +807,19 @@ fn update_bullet(bullet_state: &BulletState, transform: &mut Transform) {
 
     transform.translation.x = bullet_state.position.x;
     transform.translation.y = bullet_state.position.y;
+}
+
+fn exit_button_trigger(
+    exit_button: Single<&Interaction, With<ExitButton>>,
+    mut network_client: ResMut<NetworkClient>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    let interaction = exit_button.deref();
+    if **interaction == Interaction::Pressed {
+        if let Err(e) = network_client.disconnect() {
+            error!("Failed to disconnect: {:?}", e);
+        }
+
+        next_state.set(GameState::Welcome);
+    }
 }

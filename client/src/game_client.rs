@@ -79,6 +79,9 @@ impl GameClient {
         let packet_encoded = bincode::serde::encode_to_vec(packet, self.bincode_cfg)?;
         self.socket.send_to(&packet_encoded, self.server_addr)?;
 
+        // Immediately mark connected as false, don't wait for handle_disconnect
+        self.connected = false;
+
         Ok(())
     }
 
