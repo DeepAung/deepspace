@@ -1,8 +1,6 @@
 use bevy::ecs::query::QuerySingleError;
 use bevy::prelude::*;
-use bevy::render::render_resource::AsBindGroup;
-use bevy::shader::ShaderRef;
-use bevy::sprite_render::{Material2d, Material2dPlugin};
+use bevy::sprite_render::Material2dPlugin;
 use bevy::time::common_conditions::on_timer;
 use bevy::window::PrimaryWindow;
 use shared::{
@@ -13,16 +11,15 @@ use std::collections::HashMap;
 use std::f32::consts::PI;
 use std::ops::{Deref, DerefMut};
 
+use crate::assets::GridBackgroundMaterial;
 use crate::game_client::RenderState;
 use crate::plugins::{GameState, network::NetworkClient};
 
 pub struct GameScreenPlugin;
 
-// TODO: add font
-
 impl Plugin for GameScreenPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(Material2dPlugin::<GridMaterial>::default())
+        app.add_plugins(Material2dPlugin::<GridBackgroundMaterial>::default())
             .insert_resource(RenderStateResource(None))
             .add_systems(OnEnter(GameState::InGame), setup_game_screen)
             .add_systems(OnExit(GameState::InGame), teardown_game_screen)
@@ -136,54 +133,18 @@ pub struct LatencyText;
 #[derive(Component)]
 pub struct ExitButton;
 
-// --- Materials ---
-
-#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
-struct GridMaterial {
-    #[uniform(0)]
-    color: LinearRgba,
-    #[uniform(1)]
-    bg_color: LinearRgba,
-    #[uniform(2)]
-    grid_size: f32, // How many grid cells across the image
-    #[uniform(3)]
-    thickness: f32, // Thickness of the lines (0.0 to 1.0 relative to cell size)
-}
-
-impl Default for GridMaterial {
-    fn default() -> Self {
-        const LINE_COLOR: LinearRgba = LinearRgba::new(0.03, 0.03, 0.03, 1.0);
-        const BG_COLOR: LinearRgba = LinearRgba::new(0.0, 0.0, 0.0, 1.0);
-        const GRID_SIZE: f32 = 100.0;
-        const THICKNESS: f32 = 0.05;
-
-        Self {
-            color: LINE_COLOR,
-            bg_color: BG_COLOR,
-            grid_size: GRID_SIZE,
-            thickness: THICKNESS,
-        }
-    }
-}
-
-impl Material2d for GridMaterial {
-    fn fragment_shader() -> ShaderRef {
-        "shaders/grid_background.wgsl".into()
-    }
-}
-
 // --- Systems ---
 
 fn setup_game_screen(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut grid_materials: ResMut<Assets<GridMaterial>>,
+    mut grid_materials: ResMut<Assets<GridBackgroundMaterial>>,
 ) {
     // Background
     commands.spawn((
         InGameObject,
         Mesh2d(meshes.add(Rectangle::new(WORLD_WIDTH, WORLD_HEIGHT))),
-        MeshMaterial2d(grid_materials.add(GridMaterial::default())),
+        MeshMaterial2d(grid_materials.add(GridBackgroundMaterial::default())),
         Transform::from_xyz(0.0, 0.0, BACKGROUND_LAYER),
     ));
 

@@ -11,6 +11,7 @@ use crate::plugins::network::{NetworkClient, NetworkPlugin};
 use crate::plugins::welcome_screen::WelcomeScreenPlugin;
 
 // --- States ---
+
 #[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
 enum GameState {
     #[default]
@@ -20,6 +21,10 @@ enum GameState {
 
 const TARGET_WIDTH: f32 = 1920.0;
 const TARGET_HEIGHT: f32 = 1080.0;
+
+// --- Assets Path ---
+
+const FONT_PATH: &'static str = "fonts/Zen_Dots/ZenDots-Regular.ttf";
 
 pub fn init_game() -> anyhow::Result<()> {
     App::new()

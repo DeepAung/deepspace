@@ -1,5 +1,6 @@
 use crate::plugins::init_game;
 
+mod assets;
 mod game_client;
 mod plugins;
 

@@ -1,16 +1,20 @@
-use bevy::prelude::*;
+use bevy::{prelude::*, sprite_render::Material2dPlugin};
 use bevy_simple_text_input::{
     TextInput, TextInputPlugin, TextInputSubmitMessage, TextInputSystem, TextInputTextColor,
     TextInputTextFont, TextInputValue,
 };
 
-use crate::plugins::{GameState, network::NetworkClient};
+use crate::{
+    assets::SpaceBackgroundMaterial,
+    plugins::{FONT_PATH, GameState, TARGET_HEIGHT, TARGET_WIDTH, network::NetworkClient},
+};
 
 pub struct WelcomeScreenPlugin;
 
 impl Plugin for WelcomeScreenPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(TextInputPlugin)
+        app.add_plugins(Material2dPlugin::<SpaceBackgroundMaterial>::default())
+            .add_plugins(TextInputPlugin)
             .add_systems(OnEnter(GameState::Welcome), setup_welcome_screen)
             .add_systems(
                 Update,
@@ -25,11 +29,6 @@ impl Plugin for WelcomeScreenPlugin {
     }
 }
 
-// --- Constants ---
-const BORDER_COLOR_ACTIVE: Color = Color::srgb(0.75, 0.52, 0.99);
-const TEXT_COLOR: Color = Color::srgb(0.9, 0.9, 0.9);
-const BACKGROUND_COLOR: Color = Color::srgb(0.15, 0.15, 0.15);
-
 // --- Components ---
 #[derive(Component)]
 struct WelcomeObject;
@@ -41,7 +40,21 @@ struct StartButton;
 struct PlayerNameTextInput;
 
 // --- Systems ---
-fn setup_welcome_screen(mut commands: Commands) {
+fn setup_welcome_screen(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut space_materials: ResMut<Assets<SpaceBackgroundMaterial>>,
+    server: Res<AssetServer>,
+) {
+    // TODO: find out why background didn't render when go from Ingame to Welcome
+    // Background
+    commands.spawn((
+        WelcomeObject,
+        Mesh2d(meshes.add(Rectangle::new(TARGET_WIDTH, TARGET_HEIGHT))),
+        MeshMaterial2d(space_materials.add(SpaceBackgroundMaterial::default())),
+        Transform::from_xyz(0.0, 0.0, 0.0),
+    ));
+
     commands.spawn((
         WelcomeObject,
         Node {
@@ -55,32 +68,51 @@ fn setup_welcome_screen(mut commands: Commands) {
             ..default()
         },
         children![
-            Text::new("Enter you name"),
+            (
+                Text::new("DEEPSPACE"),
+                TextFont {
+                    font: server.load(FONT_PATH),
+                    font_size: 72.0,
+                    ..default()
+                },
+                Node {
+                    margin: UiRect::bottom(Val::Px(100.0)),
+                    ..default()
+                }
+            ),
+            (
+                Text::new("Enter you name"),
+                TextFont {
+                    font: server.load(FONT_PATH),
+                    ..default()
+                }
+            ),
             (
                 PlayerNameTextInput,
                 Node {
                     width: Val::Px(200.0),
-                    border: UiRect::all(Val::Px(5.0)),
-                    padding: UiRect::all(Val::Px(5.0)),
+                    border: UiRect::all(Val::Px(4.0)),
+                    padding: UiRect::all(Val::Px(8.0)),
                     ..default()
                 },
-                BorderColor::all(BORDER_COLOR_ACTIVE),
-                BackgroundColor(BACKGROUND_COLOR),
+                BorderColor::all(Color::WHITE),
+                BorderRadius::MAX,
+                BackgroundColor(Color::BLACK),
                 TextInput,
                 TextInputValue(String::new()),
                 TextInputTextFont(TextFont {
-                    font_size: 34.,
+                    font_size: 24.0,
                     ..default()
                 }),
-                TextInputTextColor(TextColor(TEXT_COLOR)),
+                TextInputTextColor(TextColor(Color::WHITE)),
             ),
             (
                 StartButton,
                 Button,
                 Node {
-                    width: px(150),
-                    height: px(65),
-                    border: UiRect::all(px(5)),
+                    width: Val::Px(150.0),
+                    height: Val::Px(65.0),
+                    border: UiRect::all(Val::Px(4.0)),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     ..default()
@@ -90,7 +122,11 @@ fn setup_welcome_screen(mut commands: Commands) {
                 BackgroundColor(Color::BLACK),
                 children![(
                     Text::new("Start"),
-                    TextColor(Color::srgb(0.9, 0.9, 0.9)),
+                    TextFont {
+                        font: server.load(FONT_PATH),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
                     TextShadow::default(),
                 )],
             )
