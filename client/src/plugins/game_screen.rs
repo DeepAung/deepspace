@@ -54,6 +54,7 @@ impl Plugin for GameScreenPlugin {
 }
 
 // --- Constants ---
+
 const SPACESHIP_SHAPE: Triangle2d = Triangle2d::new(
     Vec2::new(0.0, 20.0),
     Vec2::new(-15.0, -20.0),
@@ -79,6 +80,7 @@ const PLAYER_LAYER: f32 = 2.0;
 const PLAYER_INFO_LAYER: f32 = 3.0;
 
 // --- Resources ---
+
 #[derive(Resource, Deref)]
 pub struct RenderStateResource(pub Option<RenderState>);
 
@@ -147,6 +149,22 @@ struct GridMaterial {
     thickness: f32, // Thickness of the lines (0.0 to 1.0 relative to cell size)
 }
 
+impl Default for GridMaterial {
+    fn default() -> Self {
+        const LINE_COLOR: LinearRgba = LinearRgba::new(0.03, 0.03, 0.03, 1.0);
+        const BG_COLOR: LinearRgba = LinearRgba::new(0.0, 0.0, 0.0, 1.0);
+        const GRID_SIZE: f32 = 100.0;
+        const THICKNESS: f32 = 0.05;
+
+        Self {
+            color: LINE_COLOR,
+            bg_color: BG_COLOR,
+            grid_size: GRID_SIZE,
+            thickness: THICKNESS,
+        }
+    }
+}
+
 impl Material2d for GridMaterial {
     fn fragment_shader() -> ShaderRef {
         "shaders/grid_background.wgsl".into()
@@ -160,13 +178,11 @@ fn setup_game_screen(
     mut meshes: ResMut<Assets<Mesh>>,
     mut grid_materials: ResMut<Assets<GridMaterial>>,
 ) {
-    info!("GAME STARTED!");
-
     // Background
     commands.spawn((
         InGameObject,
         Mesh2d(meshes.add(Rectangle::new(WORLD_WIDTH, WORLD_HEIGHT))),
-        MeshMaterial2d(grid_materials.add(background_material())),
+        MeshMaterial2d(grid_materials.add(GridMaterial::default())),
         Transform::from_xyz(0.0, 0.0, BACKGROUND_LAYER),
     ));
 
@@ -206,20 +222,6 @@ fn setup_game_screen(
             ..default()
         },
     ));
-}
-
-fn background_material() -> GridMaterial {
-    const LINE_COLOR: LinearRgba = LinearRgba::new(0.03, 0.03, 0.03, 1.0);
-    const BG_COLOR: LinearRgba = LinearRgba::new(0.0, 0.0, 0.0, 1.0);
-    const GRID_SIZE: f32 = 100.0;
-    const THICKNESS: f32 = 0.05;
-
-    GridMaterial {
-        color: LINE_COLOR,
-        bg_color: BG_COLOR,
-        grid_size: GRID_SIZE,
-        thickness: THICKNESS,
-    }
 }
 
 fn teardown_game_screen(mut commands: Commands, query: Query<Entity, With<InGameObject>>) {
@@ -400,113 +402,6 @@ fn render_remote_players(
     }
 }
 
-fn create_player(
-    commands: &mut Commands,
-    player_state: &PlayerState,
-    player_marker: PlayerMarker,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<ColorMaterial>>,
-) {
-    let player_color = match player_marker {
-        PlayerMarker::Local => MY_PLAYER_COLOR,
-        PlayerMarker::Remote => OTHER_PLAYER_COLOR,
-    };
-
-    let health_bar_fg_color = match player_marker {
-        PlayerMarker::Local => MY_HEALTH_BAR_FG_COLOR,
-        PlayerMarker::Remote => OTHER_HEALTH_BAR_FG_COLOR,
-    };
-
-    let mut player_entity = commands.spawn((
-        InGameObject,
-        Player {
-            id: player_state.id,
-        },
-        Health {
-            current: player_state.health,
-            max: player_state.max_health,
-        },
-        Mesh2d(meshes.add(SPACESHIP_SHAPE)),
-        MeshMaterial2d(materials.add(player_color)),
-        Transform::from_xyz(
-            player_state.position.x,
-            player_state.position.y,
-            PLAYER_LAYER,
-        ),
-    ));
-
-    match player_marker {
-        PlayerMarker::Local => player_entity.insert(LocalPlayer),
-        PlayerMarker::Remote => player_entity.insert(RemotePlayer),
-    };
-
-    let player_entity_id = player_entity.id();
-
-    player_entity.with_children(|parent| {
-        // Name Text
-        parent.spawn((
-            Text2d::new(format!("{} #{}", &player_state.name, player_state.id)),
-            TextLayout::new_with_justify(Justify::Center),
-            TextFont {
-                font_size: 14.0,
-                ..default()
-            },
-            TextColor(Color::WHITE),
-            Transform::from_xyz(0.0, 55.0, PLAYER_INFO_LAYER),
-            Billboard {
-                offset: Vec2::new(0.0, 55.0),
-            },
-        ));
-
-        // Health Bar Background
-        parent.spawn((
-            Mesh2d(meshes.add(Rectangle::from_size(HEALTH_BAR_SIZE))),
-            MeshMaterial2d(materials.add(HEALTH_BAR_BG_COLOR)),
-            Transform::from_xyz(0.0, 40.0, PLAYER_INFO_LAYER),
-            Billboard {
-                offset: Vec2::new(0.0, 40.0),
-            },
-        ));
-
-        // Health Bar Foreground
-        parent.spawn((
-            HealthBarValue {
-                player_entity: player_entity_id,
-            },
-            Mesh2d(meshes.add(Rectangle::from_size(HEALTH_BAR_SIZE))),
-            MeshMaterial2d(materials.add(health_bar_fg_color)),
-            Transform::from_xyz(0.0, 40.0, PLAYER_INFO_LAYER + 0.1),
-            Billboard {
-                offset: Vec2::new(0.0, 40.0),
-            },
-        ));
-    });
-}
-
-fn update_player(
-    player_state: &PlayerState,
-    health: &mut Health,
-    transform: &mut Transform,
-    visibility: &mut Visibility,
-) {
-    // Sync health data
-    health.current = player_state.health;
-    health.max = player_state.max_health;
-
-    // Update rotation
-    transform.rotation = Quat::from_rotation_z(player_state.rotation - PI / 2.0);
-
-    // Update translation
-    transform.translation.x = player_state.position.x;
-    transform.translation.y = player_state.position.y;
-
-    // Update visibility
-    *visibility = match player_state.life {
-        shared::LifeState::Alive => Visibility::Visible,
-        shared::LifeState::Dead { respawn_time: _ } => Visibility::Hidden,
-    };
-}
-
 fn render_bullets(
     mut commands: Commands,
     state: Res<RenderStateResource>,
@@ -549,43 +444,6 @@ fn render_bullets(
             &mut materials,
         );
     }
-}
-
-fn create_bullet(
-    commands: &mut Commands,
-    local_player_id: PlayerId,
-    bullet_state: &BulletState,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<ColorMaterial>>,
-) {
-    // Determine color based on owner
-    let color = if bullet_state.owner_id == local_player_id {
-        MY_BULLET_COLOR
-    } else {
-        OTHER_BULLET_COLOR
-    };
-
-    commands.spawn((
-        InGameObject,
-        Bullet {
-            id: bullet_state.id,
-        },
-        Mesh2d(meshes.add(BULLET_SHAPE)),
-        MeshMaterial2d(materials.add(color)),
-        Transform::from_xyz(
-            bullet_state.position.x,
-            bullet_state.position.y,
-            BULLET_LAYER,
-        ),
-    ));
-}
-
-fn update_bullet(bullet_state: &BulletState, transform: &mut Transform) {
-    let rotation = Vec2::new(bullet_state.velocity.x, bullet_state.velocity.y).to_angle();
-    transform.rotation = Quat::from_rotation_z(rotation - PI / 2.0);
-
-    transform.translation.x = bullet_state.position.x;
-    transform.translation.y = bullet_state.position.y;
 }
 
 fn update_health_bars_position(
@@ -725,4 +583,150 @@ fn render_respawn_popup(
             respawn_popup_text.0 = format!("Respawn in {:.1}", respawn_time);
         }
     }
+}
+
+// --- Helper Functions ---
+
+fn create_player(
+    commands: &mut Commands,
+    player_state: &PlayerState,
+    player_marker: PlayerMarker,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<ColorMaterial>>,
+) {
+    let player_color = match player_marker {
+        PlayerMarker::Local => MY_PLAYER_COLOR,
+        PlayerMarker::Remote => OTHER_PLAYER_COLOR,
+    };
+
+    let health_bar_fg_color = match player_marker {
+        PlayerMarker::Local => MY_HEALTH_BAR_FG_COLOR,
+        PlayerMarker::Remote => OTHER_HEALTH_BAR_FG_COLOR,
+    };
+
+    let mut player_entity = commands.spawn((
+        InGameObject,
+        Player {
+            id: player_state.id,
+        },
+        Health {
+            current: player_state.health,
+            max: player_state.max_health,
+        },
+        Mesh2d(meshes.add(SPACESHIP_SHAPE)),
+        MeshMaterial2d(materials.add(player_color)),
+        Transform::from_xyz(
+            player_state.position.x,
+            player_state.position.y,
+            PLAYER_LAYER,
+        ),
+    ));
+
+    match player_marker {
+        PlayerMarker::Local => player_entity.insert(LocalPlayer),
+        PlayerMarker::Remote => player_entity.insert(RemotePlayer),
+    };
+
+    let player_entity_id = player_entity.id();
+
+    player_entity.with_children(|parent| {
+        // Name Text
+        parent.spawn((
+            Text2d::new(format!("{} #{}", &player_state.name, player_state.id)),
+            TextLayout::new_with_justify(Justify::Center),
+            TextFont {
+                font_size: 14.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+            Transform::from_xyz(0.0, 55.0, PLAYER_INFO_LAYER),
+            Billboard {
+                offset: Vec2::new(0.0, 55.0),
+            },
+        ));
+
+        // Health Bar Background
+        parent.spawn((
+            Mesh2d(meshes.add(Rectangle::from_size(HEALTH_BAR_SIZE))),
+            MeshMaterial2d(materials.add(HEALTH_BAR_BG_COLOR)),
+            Transform::from_xyz(0.0, 40.0, PLAYER_INFO_LAYER),
+            Billboard {
+                offset: Vec2::new(0.0, 40.0),
+            },
+        ));
+
+        // Health Bar Foreground
+        parent.spawn((
+            HealthBarValue {
+                player_entity: player_entity_id,
+            },
+            Mesh2d(meshes.add(Rectangle::from_size(HEALTH_BAR_SIZE))),
+            MeshMaterial2d(materials.add(health_bar_fg_color)),
+            Transform::from_xyz(0.0, 40.0, PLAYER_INFO_LAYER + 0.1),
+            Billboard {
+                offset: Vec2::new(0.0, 40.0),
+            },
+        ));
+    });
+}
+
+fn update_player(
+    player_state: &PlayerState,
+    health: &mut Health,
+    transform: &mut Transform,
+    visibility: &mut Visibility,
+) {
+    // Sync health data
+    health.current = player_state.health;
+    health.max = player_state.max_health;
+
+    // Update rotation
+    transform.rotation = Quat::from_rotation_z(player_state.rotation - PI / 2.0);
+
+    // Update translation
+    transform.translation.x = player_state.position.x;
+    transform.translation.y = player_state.position.y;
+
+    // Update visibility
+    *visibility = match player_state.life {
+        shared::LifeState::Alive => Visibility::Visible,
+        shared::LifeState::Dead { respawn_time: _ } => Visibility::Hidden,
+    };
+}
+
+fn create_bullet(
+    commands: &mut Commands,
+    local_player_id: PlayerId,
+    bullet_state: &BulletState,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<ColorMaterial>>,
+) {
+    // Determine color based on owner
+    let color = if bullet_state.owner_id == local_player_id {
+        MY_BULLET_COLOR
+    } else {
+        OTHER_BULLET_COLOR
+    };
+
+    commands.spawn((
+        InGameObject,
+        Bullet {
+            id: bullet_state.id,
+        },
+        Mesh2d(meshes.add(BULLET_SHAPE)),
+        MeshMaterial2d(materials.add(color)),
+        Transform::from_xyz(
+            bullet_state.position.x,
+            bullet_state.position.y,
+            BULLET_LAYER,
+        ),
+    ));
+}
+
+fn update_bullet(bullet_state: &BulletState, transform: &mut Transform) {
+    let rotation = Vec2::new(bullet_state.velocity.x, bullet_state.velocity.y).to_angle();
+    transform.rotation = Quat::from_rotation_z(rotation - PI / 2.0);
+
+    transform.translation.x = bullet_state.position.x;
+    transform.translation.y = bullet_state.position.y;
 }
