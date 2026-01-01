@@ -84,6 +84,10 @@ impl Vec2 {
         (self.x * self.x + self.y * self.y).sqrt()
     }
 
+    pub fn length_sq(&self) -> f32 {
+        self.x * self.x + self.y * self.y
+    }
+
     pub fn normalized(self) -> Self {
         let len = self.length();
         Self {
@@ -319,7 +323,6 @@ pub struct ViewSnapshot {
     pub viewer_position: Vec2,
     pub tick: TickNumber,
 
-    // TODO: maybe use Arc<[T]> instead of Vec
     pub players: Vec<PlayerState>,
     pub bullets: Vec<BulletState>,
     pub scoreboard: Vec<ScoreEntry>,

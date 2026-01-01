@@ -57,7 +57,7 @@ impl GameServer {
         }
 
         let player_id = self.generate_next_player_id();
-        let spawn_pos = Self::generate_spawn_pos();
+        let spawn_pos = self.generate_spawn_pos();
         let player = PlayerState::new(player_id, player_name, spawn_pos, PLAYER_MAX_HEALTH);
 
         self.clients.insert(addr, ClientConnection::new(player_id));
@@ -67,11 +67,30 @@ impl GameServer {
         ServerPacket::ConnectionAccepted { player }
     }
 
-    // TODO: avoid spawn near enemy
-    fn generate_spawn_pos() -> Vec2 {
-        let x = rand::random_range((WORLD_MIN_X_PADDED)..=(WORLD_MAX_X_PADDED));
-        let y = rand::random_range((WORLD_MIN_Y_PADDED)..=(WORLD_MAX_Y_PADDED));
-        Vec2::new(x, y)
+    fn generate_spawn_pos(&self) -> Vec2 {
+        const NEAR_ENEMY_DIST: f32 = 50.0;
+        const NEAR_ENEMY_DIST_SQ: f32 = NEAR_ENEMY_DIST * NEAR_ENEMY_DIST;
+
+        const MAX_ATTEMPTS: i32 = 10;
+
+        let mut new_pos = Vec2::new(0.0, 0.0);
+
+        for _ in 0..MAX_ATTEMPTS {
+            new_pos.x = rand::random_range((WORLD_MIN_X_PADDED)..=(WORLD_MAX_X_PADDED));
+            new_pos.y = rand::random_range((WORLD_MIN_Y_PADDED)..=(WORLD_MAX_Y_PADDED));
+
+            // TODO: optimize this using quad tree
+            let near_enemy = self
+                .players
+                .iter()
+                .any(|(_, p)| (new_pos - p.position).length_sq() <= NEAR_ENEMY_DIST_SQ);
+
+            if !near_enemy {
+                return new_pos;
+            }
+        }
+
+        new_pos
     }
 
     fn generate_next_player_id(&mut self) -> PlayerId {
@@ -170,7 +189,7 @@ impl GameServer {
             return;
         };
 
-        // TODO: check if bullet_id already exist
+        // INFO: u64 should be enough to guarantee that next_bullet_id would not hit an id collision
         let bullet_id = self.next_bullet_id;
         self.next_bullet_id += 1;
 
@@ -346,22 +365,31 @@ impl GameServer {
     }
 
     fn update_respawn(&mut self, delta_time: f32) {
+        let mut players_to_respawn = Vec::new();
+
         for player in self.players.values_mut() {
             match &mut player.life {
                 LifeState::Alive => continue,
                 LifeState::Dead { respawn_time } => {
                     let new_time = *respawn_time - delta_time;
                     if new_time <= 0.0 {
-                        player.position = Self::generate_spawn_pos();
-                        player.velocity = 0.0;
-                        player.rotation = 0.0;
-                        player.health = player.max_health;
-                        player.life = LifeState::Alive;
+                        players_to_respawn.push(player.id);
                     } else {
                         *respawn_time = new_time;
                     }
                 }
             };
+        }
+
+        for player_id in players_to_respawn {
+            let new_pos = self.generate_spawn_pos();
+            if let Some(player) = self.players.get_mut(&player_id) {
+                player.position = new_pos;
+                player.velocity = 0.0;
+                player.rotation = 0.0;
+                player.health = player.max_health;
+                player.life = LifeState::Alive;
+            }
         }
     }
 
