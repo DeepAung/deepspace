@@ -277,21 +277,21 @@ impl GameClient {
         // Local player: use predicted state (no interpolation)
         let local_player = self.local_player.clone();
 
-        // Other players: use interpolated state (delayed by 100ms)
+        // Other players and Bullets: use interpolated state
         let interpolated_snapshot = self.interpolation_buffer.interpolate();
 
-        let other_players = match interpolated_snapshot {
-            Some(snapshot) => snapshot
-                .players
-                .iter()
-                .filter(|p| Some(p.id) != self.player_id)
-                .cloned()
-                .collect(),
-            None => self.other_players.clone(),
+        let (other_players, bullets) = match interpolated_snapshot {
+            Some(snapshot) => (
+                snapshot
+                    .players
+                    .iter()
+                    .filter(|p| Some(p.id) != self.player_id)
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                snapshot.bullets.clone(),
+            ),
+            None => (self.other_players.clone(), self.bullets.clone()),
         };
-
-        // TODO: add interpolation on bullets
-        let bullets = self.bullets.clone();
 
         RenderState {
             local_player,
