@@ -51,7 +51,7 @@ fn setup_welcome_screen(mut commands: Commands) {
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::Center,
             justify_content: JustifyContent::Center,
-            row_gap: Val::Px(8.0),
+            row_gap: Val::Px(16.0),
             ..default()
         },
         children![
@@ -89,7 +89,7 @@ fn setup_welcome_screen(mut commands: Commands) {
                 BorderRadius::MAX,
                 BackgroundColor(Color::BLACK),
                 children![(
-                    Text::new("Button"),
+                    Text::new("Start"),
                     TextColor(Color::srgb(0.9, 0.9, 0.9)),
                     TextShadow::default(),
                 )],

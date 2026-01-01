@@ -27,7 +27,7 @@ pub fn init_game() -> anyhow::Result<()> {
             close_when_requested: false,
             primary_window: Some(Window {
                 resolution: WindowResolution::new(TARGET_WIDTH as u32, TARGET_HEIGHT as u32),
-                title: "Some Really Cool Title".to_string(),
+                title: "Deepspace".to_string(),
                 ..default()
             }),
             ..default()
