@@ -518,9 +518,15 @@ impl InterpolationBuffer {
         let now = Instant::now();
         self.snapshots.push_back((now, snapshot));
 
-        // Keep only last 10 snapshots
-        if self.snapshots.len() > 10 {
-            self.snapshots.pop_front();
+        const MARGIN: Duration = Duration::from_millis(100);
+
+        // Keep only snapshots that's within the delay
+        while let Some((time, _)) = self.snapshots.front() {
+            if now - *time > INTERPOLATION_DELAY + MARGIN {
+                self.snapshots.pop_front();
+            } else {
+                break;
+            }
         }
     }
 
