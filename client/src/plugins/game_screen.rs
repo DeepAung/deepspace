@@ -21,12 +21,14 @@ impl Plugin for GameScreenPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(Material2dPlugin::<GridBackgroundMaterial>::default())
             .insert_resource(RenderStateResource(None))
+            .insert_resource(HasPressedShoot(false))
             .add_systems(OnEnter(GameState::InGame), setup_game_screen)
             .add_systems(OnExit(GameState::InGame), teardown_game_screen)
             .add_systems(
                 Update,
                 (
                     exit_button_trigger,
+                    capture_has_pressed_shoot,
                     handle_input.run_if(on_timer(TICK_DURATION)),
                     update_render_state_resource,
                     render_local_player,
@@ -75,6 +77,9 @@ const PLAYER_INFO_LAYER: f32 = 3.0;
 
 #[derive(Resource, Deref)]
 pub struct RenderStateResource(pub Option<RenderState>);
+
+#[derive(Resource, Deref)]
+struct HasPressedShoot(pub bool);
 
 // --- Components ---
 
@@ -276,9 +281,18 @@ fn update_camera(
         .smooth_nudge(&direction, CAMERA_DECAY_RATE, time.delta_secs());
 }
 
+fn capture_has_pressed_shoot(
+    mouse_input: Res<ButtonInput<MouseButton>>,
+    mut has_pressed_shoot: ResMut<HasPressedShoot>,
+) {
+    if mouse_input.just_pressed(MouseButton::Left) {
+        has_pressed_shoot.0 = true;
+    }
+}
+
 fn handle_input(
     kb_input: Res<ButtonInput<KeyCode>>,
-    mouse_input: Res<ButtonInput<MouseButton>>,
+    mut has_pressed_shoot: ResMut<HasPressedShoot>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut network_client: ResMut<NetworkClient>,
     state: Res<RenderStateResource>,
@@ -310,7 +324,8 @@ fn handle_input(
         None => *last_rotation,
     };
 
-    let shoot = mouse_input.just_pressed(MouseButton::Left);
+    let shoot = has_pressed_shoot.0;
+    has_pressed_shoot.0 = false;
 
     let move_direction = if kb_input.pressed(KeyCode::KeyW) {
         MoveDirection::Forward
