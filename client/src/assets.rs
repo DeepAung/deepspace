@@ -2,6 +2,10 @@ use bevy::{
     prelude::*, render::render_resource::AsBindGroup, shader::ShaderRef, sprite_render::Material2d,
 };
 
+// --- Assets Path ---
+
+pub const FONT_PATH: &'static str = "fonts/Zen_Dots/ZenDots-Regular.ttf";
+
 // --- Materials ---
 
 #[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]

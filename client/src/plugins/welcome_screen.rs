@@ -5,8 +5,8 @@ use bevy_simple_text_input::{
 };
 
 use crate::{
-    assets::SpaceBackgroundMaterial,
-    plugins::{FONT_PATH, GameState, TARGET_HEIGHT, TARGET_WIDTH, network::NetworkClient},
+    assets::{FONT_PATH, SpaceBackgroundMaterial},
+    plugins::{GameState, TARGET_HEIGHT, TARGET_WIDTH, network::NetworkClient},
 };
 
 pub struct WelcomeScreenPlugin;

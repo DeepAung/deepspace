@@ -22,10 +22,6 @@ enum GameState {
 const TARGET_WIDTH: f32 = 1920.0;
 const TARGET_HEIGHT: f32 = 1080.0;
 
-// --- Assets Path ---
-
-const FONT_PATH: &'static str = "fonts/Zen_Dots/ZenDots-Regular.ttf";
-
 pub fn init_game() -> anyhow::Result<()> {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
