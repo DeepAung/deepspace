@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::f32::consts::PI;
 use std::ops::{Deref, DerefMut};
 
-use crate::assets::GridBackgroundMaterial;
+use crate::assets::{FONT_PATH, GridBackgroundMaterial};
 use crate::game_client::RenderState;
 use crate::plugins::{GameState, network::NetworkClient};
 
@@ -55,7 +55,7 @@ const SPACESHIP_SHAPE: Triangle2d = Triangle2d::new(
 
 const BULLET_SHAPE: Rectangle = Rectangle::new(5.0, 8.0);
 
-const HEALTH_BAR_SIZE: Vec2 = Vec2::new(60.0, 5.0);
+const HEALTH_BAR_SIZE: Vec2 = Vec2::new(80.0, 5.0);
 
 const MY_PLAYER_COLOR: Color = Color::srgb(1.0, 1.0, 1.0);
 const OTHER_PLAYER_COLOR: Color = Color::srgb(1.0, 0.0, 0.0);
@@ -139,6 +139,8 @@ fn setup_game_screen(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut grid_materials: ResMut<Assets<GridBackgroundMaterial>>,
+
+    asset_server: Res<AssetServer>,
 ) {
     // Background
     commands.spawn((
@@ -161,7 +163,14 @@ fn setup_game_screen(
             ..default()
         },
         BackgroundColor(POPUP_COLOR),
-        children![(Text::new("Respawn in X"), RespawnPopupText)],
+        children![(
+            RespawnPopupText,
+            Text::new("Respawn in X"),
+            TextFont {
+                font: asset_server.load(FONT_PATH),
+                ..default()
+            }
+        )],
     ));
 
     // Top-Right Container
@@ -196,6 +205,7 @@ fn setup_game_screen(
                 Text::new(""),
                 TextColor(Color::WHITE),
                 TextFont {
+                    font: asset_server.load(FONT_PATH),
                     font_size: 14.0,
                     ..default()
                 },
@@ -234,7 +244,14 @@ fn setup_game_screen(
         BorderColor::all(Color::WHITE),
         BorderRadius::MAX,
         BackgroundColor(Color::BLACK),
-        children![(Text::new("< Exit"), TextColor(Color::WHITE))],
+        children![(
+            Text::new("< Exit"),
+            TextFont {
+                font: asset_server.load(FONT_PATH),
+                ..default()
+            },
+            TextColor(Color::WHITE)
+        )],
     ));
 }
 
@@ -328,6 +345,7 @@ fn render_local_player(
 
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    asset_server: Res<AssetServer>,
 ) {
     let Some(state) = &state.0 else {
         return;
@@ -353,6 +371,7 @@ fn render_local_player(
                 PlayerMarker::Local,
                 &mut meshes,
                 &mut materials,
+                &asset_server,
             );
 
             camera.translation.x = local_player_state.position.x;
@@ -381,6 +400,7 @@ fn render_remote_players(
 
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    asset_server: Res<AssetServer>,
 ) {
     let Some(state) = &state.0 else {
         return;
@@ -412,6 +432,7 @@ fn render_remote_players(
             PlayerMarker::Remote,
             &mut meshes,
             &mut materials,
+            &asset_server,
         );
     }
 }
@@ -510,6 +531,8 @@ fn update_scoreboard(
     mut commands: Commands,
     state: Res<RenderStateResource>,
     scoreboard_entity: Single<Entity, With<Scoreboard>>,
+
+    asset_server: Res<AssetServer>,
 ) {
     let Some(state) = &state.0 else {
         return;
@@ -525,6 +548,7 @@ fn update_scoreboard(
         parent.spawn((
             Text::new("Scoreboard"),
             TextFont {
+                font: asset_server.load(FONT_PATH),
                 font_size: 20.0,
                 ..default()
             },
@@ -554,6 +578,7 @@ fn update_scoreboard(
                             entry.player_id,
                         )),
                         TextFont {
+                            font: asset_server.load(FONT_PATH),
                             font_size: 16.0,
                             ..default()
                         },
@@ -564,10 +589,11 @@ fn update_scoreboard(
                     row.spawn((
                         Text::new(entry.score.to_string()),
                         TextFont {
+                            font: asset_server.load(FONT_PATH),
                             font_size: 16.0,
                             ..default()
                         },
-                        TextColor(Color::srgb(0.0, 1.0, 0.0)),
+                        TextColor(Color::srgb(1.0, 1.0, 1.0)),
                     ));
                 });
         }
@@ -632,6 +658,7 @@ fn create_player(
     player_marker: PlayerMarker,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<ColorMaterial>>,
+    asset_server: &Res<AssetServer>,
 ) {
     let player_color = match player_marker {
         PlayerMarker::Local => MY_PLAYER_COLOR,
@@ -674,6 +701,7 @@ fn create_player(
             Text2d::new(format!("{} #{}", &player_state.name, player_state.id)),
             TextLayout::new_with_justify(Justify::Center),
             TextFont {
+                font: asset_server.load(FONT_PATH),
                 font_size: 14.0,
                 ..default()
             },

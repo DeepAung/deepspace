@@ -44,7 +44,7 @@ fn setup_welcome_screen(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut space_materials: ResMut<Assets<SpaceBackgroundMaterial>>,
-    server: Res<AssetServer>,
+    asset_server: Res<AssetServer>,
 ) {
     // TODO: find out why background didn't render when go from Ingame to Welcome
     // Background
@@ -71,7 +71,7 @@ fn setup_welcome_screen(
             (
                 Text::new("DEEPSPACE"),
                 TextFont {
-                    font: server.load(FONT_PATH),
+                    font: asset_server.load(FONT_PATH),
                     font_size: 72.0,
                     ..default()
                 },
@@ -83,7 +83,7 @@ fn setup_welcome_screen(
             (
                 Text::new("Enter you name"),
                 TextFont {
-                    font: server.load(FONT_PATH),
+                    font: asset_server.load(FONT_PATH),
                     ..default()
                 }
             ),
@@ -123,7 +123,7 @@ fn setup_welcome_screen(
                 children![(
                     Text::new("Start"),
                     TextFont {
-                        font: server.load(FONT_PATH),
+                        font: asset_server.load(FONT_PATH),
                         ..default()
                     },
                     TextColor(Color::WHITE),
