@@ -46,7 +46,6 @@ fn setup_welcome_screen(
     mut space_materials: ResMut<Assets<SpaceBackgroundMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
-    // TODO: find out why background didn't render when go from Ingame to Welcome
     // Background
     commands.spawn((
         WelcomeObject,

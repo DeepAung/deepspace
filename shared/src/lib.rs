@@ -349,7 +349,6 @@ pub struct LagCompensator {
     snapshots: VecDeque<LagCompensatorSnapshot>,
 }
 
-// TODO: find a better name
 pub struct LagCompensatorSnapshot {
     pub time: SystemTime,
     pub tick: TickNumber,
