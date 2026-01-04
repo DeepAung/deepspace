@@ -869,7 +869,7 @@ fn update_player(
     // Update visibility
     *visibility = match player_state.life {
         shared::LifeState::Alive => Visibility::Visible,
-        shared::LifeState::Dead { respawn_time: _ } => Visibility::Hidden,
+        shared::LifeState::Dead { .. } => Visibility::Hidden,
     };
 }
 

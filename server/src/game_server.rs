@@ -171,7 +171,7 @@ impl GameServer {
 
             match player.life {
                 LifeState::Alive => {}
-                LifeState::Dead { respawn_time: _ } => continue,
+                LifeState::Dead { .. } => continue,
             };
 
             player.apply_movement(&input, delta_time);
@@ -321,7 +321,7 @@ impl GameServer {
             for player in self.players.values() {
                 match player.life {
                     LifeState::Alive => {}
-                    LifeState::Dead { respawn_time: _ } => continue,
+                    LifeState::Dead { .. } => continue,
                 };
 
                 if bullet.owner_id == player.id {

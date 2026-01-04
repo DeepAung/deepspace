@@ -371,7 +371,7 @@ impl LagCompensator {
                 .iter()
                 .filter_map(|(id, p)| match p.life {
                     LifeState::Alive => Some((*id, p.position)),
-                    LifeState::Dead { respawn_time: _ } => None,
+                    LifeState::Dead { .. } => None,
                 })
                 .collect(),
         };
