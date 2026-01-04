@@ -79,7 +79,7 @@ impl GameServer {
             new_pos.x = rand::random_range((WORLD_MIN_X_PADDED)..=(WORLD_MAX_X_PADDED));
             new_pos.y = rand::random_range((WORLD_MIN_Y_PADDED)..=(WORLD_MAX_Y_PADDED));
 
-            // TODO: optimize this using quad tree
+            // TODO: optimize this
             let near_enemy = self
                 .players
                 .iter()
@@ -316,7 +316,7 @@ impl GameServer {
     fn check_collisions(&mut self) {
         let mut hits = Vec::new();
 
-        // TODO: optimize this nested loop by using quad tree
+        // TODO: optimize this nested loop
         for bullet in &self.bullets {
             for player in self.players.values() {
                 match player.life {
