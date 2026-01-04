@@ -473,10 +473,16 @@ impl PredictionState {
         self.pending_inputs
             .retain(|input| input.sequence > server_state.last_processed_input);
 
+        // Build corrected state based on the server state
+        let mut corrected_state = server_state.clone();
+        for input in &self.pending_inputs {
+            corrected_state.apply_movement(&input, TICK_DURATION.as_secs_f32());
+        }
+
         // Check for prediction error
         let prediction_error = if let Some(local) = &local_player {
-            let dx = local.position.x - server_state.position.x;
-            let dy = local.position.y - server_state.position.y;
+            let dx = local.position.x - corrected_state.position.x;
+            let dy = local.position.y - corrected_state.position.y;
             (dx * dx + dy * dy).sqrt()
         } else {
             0.0
@@ -491,20 +497,13 @@ impl PredictionState {
                 prediction_error
             );
 
-            // Replay unacknowledged inputs
-            let mut corrected_state = server_state.clone();
-
-            for input in &self.pending_inputs {
-                corrected_state.apply_movement(&input, TICK_DURATION.as_secs_f32());
-            }
-
             *local_player = Some(corrected_state);
         } else {
             // Small error, just update metadata
             if let Some(local) = local_player {
-                local.health = server_state.health;
-                local.score = server_state.score;
-                local.life = server_state.life.clone();
+                local.health = corrected_state.health;
+                local.score = corrected_state.score;
+                local.life = corrected_state.life.clone();
             }
         }
     }
