@@ -315,7 +315,7 @@ fn update_camera(
     local_player: Single<&Transform, (With<LocalPlayer>, Without<Camera2d>)>,
     time: Res<Time>,
 ) {
-    const CAMERA_DECAY_RATE: f32 = 1.0;
+    const CAMERA_DECAY_RATE: f32 = 5.0;
 
     let Vec3 { x, y, .. } = local_player.translation;
     let direction = Vec3::new(x, y, camera.translation.z);
