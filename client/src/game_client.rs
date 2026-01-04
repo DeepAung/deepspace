@@ -31,8 +31,9 @@ pub struct GameClient {
     interpolation_buffer: InterpolationBuffer,
 
     // Timing
-    round_trip_time: TimeSecs,
-    clock_offset: TimeSecs,
+    round_trip_time_secs: f64,
+    /// clock offset can be negative
+    clock_offset_secs: f64,
 }
 
 impl GameClient {
@@ -50,8 +51,8 @@ impl GameClient {
             prediction: PredictionState::new(),
             next_input_sequence: 0,
             interpolation_buffer: InterpolationBuffer::new(),
-            round_trip_time: 0.0,
-            clock_offset: 0.0,
+            round_trip_time_secs: 0.0,
+            clock_offset_secs: 0.0,
         }
     }
 
@@ -97,7 +98,12 @@ impl GameClient {
         }
 
         // Create input
-        let prediected_time = SystemTime::now() + Duration::from_secs_f64(self.clock_offset);
+        let prediected_time = if self.clock_offset_secs >= 0.0 {
+            SystemTime::now() + Duration::from_secs_f64(self.clock_offset_secs)
+        } else {
+            SystemTime::now() - Duration::from_secs_f64(-self.clock_offset_secs)
+        };
+
         let input = ClientInput {
             predicted_time: prediected_time,
             sequence: self.next_input_sequence,
@@ -274,8 +280,8 @@ impl GameClient {
             .unwrap()
             .as_secs_f64();
 
-        self.round_trip_time = (t4 - t1) - (t3 - t2);
-        self.clock_offset = (t2 - t1) - (self.round_trip_time / 2.0);
+        self.round_trip_time_secs = (t4 - t1) - (t3 - t2);
+        self.clock_offset_secs = (t2 - t1) - (self.round_trip_time_secs / 2.0);
     }
 
     pub fn get_render_state(&self) -> RenderState {
@@ -306,8 +312,8 @@ impl GameClient {
         }
     }
 
-    pub fn get_round_trip_time(&self) -> f64 {
-        self.round_trip_time
+    pub fn get_round_trip_time_secs(&self) -> f64 {
+        self.round_trip_time_secs
     }
 
     pub fn get_local_player(&self) -> Option<&PlayerState> {

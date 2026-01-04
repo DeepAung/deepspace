@@ -69,7 +69,6 @@ pub type SequenceNumber = u64;
 pub type TickNumber = u64;
 pub type PlayerId = u64;
 pub type BulletId = u64;
-pub type TimeSecs = f64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Vec2 {

@@ -714,8 +714,8 @@ fn update_latency_text(
 ) {
     let (text, color) = latency_single.deref_mut();
 
-    let round_trip_time = network_client.get_round_trip_time();
-    let latency_ms = round_trip_time * 1000.0;
+    let round_trip_time_secs = network_client.get_round_trip_time_secs();
+    let latency_ms = round_trip_time_secs * 1000.0;
 
     text.0 = format!("latency {:.0} ms", latency_ms);
     color.0 = latency_ms_to_color(latency_ms);
