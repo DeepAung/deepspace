@@ -140,6 +140,20 @@ impl Mul<f32> for Vec2 {
     }
 }
 
+#[cfg(feature = "bevy_support")]
+impl From<bevy::math::Vec2> for Vec2 {
+    fn from(v: bevy::math::Vec2) -> Self {
+        Self { x: v.x, y: v.y }
+    }
+}
+
+#[cfg(feature = "bevy_support")]
+impl From<Vec2> for bevy::math::Vec2 {
+    fn from(v: Vec2) -> Self {
+        bevy::math::Vec2::new(v.x, v.y)
+    }
+}
+
 // ===== States ===== //
 // TODO: add Spawning state where player is invincible for a certain amount of time
 #[derive(Debug, Clone, Serialize, Deserialize)]

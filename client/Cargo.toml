@@ -4,12 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-shared = { path = "../shared" }
+shared = { path = "../shared", features = ["bevy_support"] }
 anyhow = { workspace = true }
 serde = { workspace = true }
 bincode = { workspace = true }
-# tokio = { workspace = true }
-bevy = "0.17"
+bevy = { workspace = true }
 bevy_simple_text_input = "0.12"
 crossbeam = "0.8"
 

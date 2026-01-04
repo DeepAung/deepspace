@@ -22,6 +22,7 @@ impl Plugin for GameScreenPlugin {
         app.add_plugins(Material2dPlugin::<GridBackgroundMaterial>::default())
             .insert_resource(RenderStateResource(None))
             .insert_resource(HasPressedShoot(false))
+            .insert_resource(LocalPlayerInterpolation::default())
             .add_systems(OnEnter(GameState::InGame), setup_game_screen)
             .add_systems(OnExit(GameState::InGame), teardown_game_screen)
             .add_systems(
@@ -80,6 +81,49 @@ pub struct RenderStateResource(pub Option<RenderState>);
 
 #[derive(Resource, Deref)]
 struct HasPressedShoot(pub bool);
+
+#[derive(Resource, Default)]
+struct LocalPlayerInterpolation {
+    pub cur_position: Vec2,
+    pub prev_position: Vec2,
+
+    pub cur_rotation: Rot2,
+    pub prev_rotation: Rot2,
+
+    pub start_time_secs: f64,
+
+    cur_time_secs: f64,
+    delta: f32,
+}
+
+impl LocalPlayerInterpolation {
+    pub fn set_new_data(&mut self, position: Vec2, rotation: f32, start_time_secs: f64) {
+        self.prev_position = self.cur_position;
+        self.cur_position = position;
+
+        self.prev_rotation = self.cur_rotation;
+        self.cur_rotation = Rot2::radians(rotation);
+
+        self.start_time_secs = start_time_secs;
+    }
+
+    pub fn set_cur_time(&mut self, cur_time_secs: f64) {
+        self.cur_time_secs = cur_time_secs;
+
+        self.delta =
+            (self.cur_time_secs - self.start_time_secs) as f32 / TICK_DURATION.as_secs_f32();
+    }
+
+    pub fn get_lerped_position(&self) -> Vec2 {
+        self.prev_position.lerp(self.cur_position, self.delta)
+    }
+
+    pub fn get_lerped_rotation(&self) -> f32 {
+        self.prev_rotation
+            .slerp(self.cur_rotation, self.delta)
+            .as_radians()
+    }
+}
 
 // --- Components ---
 
@@ -291,13 +335,16 @@ fn capture_has_pressed_shoot(
 }
 
 fn handle_input(
+    state: Res<RenderStateResource>,
+
     kb_input: Res<ButtonInput<KeyCode>>,
     mut has_pressed_shoot: ResMut<HasPressedShoot>,
     window: Single<&Window, With<PrimaryWindow>>,
-    mut network_client: ResMut<NetworkClient>,
-    state: Res<RenderStateResource>,
-
     mut last_rotation: Local<f32>,
+
+    mut network_client: ResMut<NetworkClient>,
+    mut local_player_interpolation: ResMut<LocalPlayerInterpolation>,
+    time: Res<Time>,
 ) {
     // Ignore input if player is dead
     if let Some(state) = &state.0 {
@@ -338,6 +385,14 @@ fn handle_input(
     if let Err(e) = network_client.send_input(move_direction, rotation, shoot) {
         error!("Failed to send input: {:?}", e);
     }
+
+    if let Some(local_player) = network_client.get_local_player() {
+        local_player_interpolation.set_new_data(
+            local_player.position.into(),
+            local_player.rotation,
+            time.elapsed_secs_f64(),
+        );
+    }
 }
 
 fn update_render_state_resource(
@@ -350,6 +405,7 @@ fn update_render_state_resource(
 
 fn render_local_player(
     mut commands: Commands,
+    time: Res<Time>,
     state: Res<RenderStateResource>,
 
     mut camera: Single<&mut Transform, With<Camera2d>>,
@@ -361,6 +417,8 @@ fn render_local_player(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     asset_server: Res<AssetServer>,
+
+    mut local_player_interpolation: ResMut<LocalPlayerInterpolation>,
 ) {
     let Some(state) = &state.0 else {
         return;
@@ -372,11 +430,17 @@ fn render_local_player(
 
     match local_player_query.single_mut() {
         Ok((mut health, mut transform, mut visibility)) => {
+            local_player_interpolation.set_cur_time(time.elapsed_secs_f64());
+
+            let lerped_position = local_player_interpolation.get_lerped_position();
+            let lerped_rotation = local_player_interpolation.get_lerped_rotation();
+
             update_player(
                 local_player_state,
                 &mut health,
                 &mut transform,
                 &mut visibility,
+                Some((lerped_position, lerped_rotation)),
             );
         }
         Err(QuerySingleError::NoEntities(_)) => {
@@ -430,7 +494,13 @@ fn render_remote_players(
         remote_players_query.iter_mut()
     {
         if let Some(&player_state) = remote_player_states.get(&player.id) {
-            update_player(player_state, &mut health, &mut transform, &mut visibility);
+            update_player(
+                player_state,
+                &mut health,
+                &mut transform,
+                &mut visibility,
+                None,
+            );
 
             // Remove from map so we know we processed it
             remote_player_states.remove(&player.id);
@@ -757,17 +827,25 @@ fn update_player(
     health: &mut Health,
     transform: &mut Transform,
     visibility: &mut Visibility,
+    overrided_position_rotation: Option<(Vec2, f32)>,
 ) {
     // Sync health data
     health.current = player_state.health;
     health.max = player_state.max_health;
 
-    // Update rotation
-    transform.rotation = Quat::from_rotation_z(player_state.rotation - PI / 2.0);
-
-    // Update translation
-    transform.translation.x = player_state.position.x;
-    transform.translation.y = player_state.position.y;
+    // Update translation and rotation
+    match overrided_position_rotation {
+        Some((position, rotation)) => {
+            transform.translation.x = position.x;
+            transform.translation.y = position.y;
+            transform.rotation = Quat::from_rotation_z(rotation - PI / 2.0);
+        }
+        None => {
+            transform.translation.x = player_state.position.x;
+            transform.translation.y = player_state.position.y;
+            transform.rotation = Quat::from_rotation_z(player_state.rotation - PI / 2.0);
+        }
+    };
 
     // Update visibility
     *visibility = match player_state.life {

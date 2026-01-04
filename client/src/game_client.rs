@@ -304,6 +304,10 @@ impl GameClient {
     pub fn get_round_trip_time(&self) -> f64 {
         self.round_trip_time
     }
+
+    pub fn get_local_player(&self) -> Option<&PlayerState> {
+        self.local_player.as_ref()
+    }
 }
 
 #[derive(Debug, Clone)]

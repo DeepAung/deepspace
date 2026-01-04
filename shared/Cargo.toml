@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 serde = { workspace = true }
 bincode = { workspace = true }
+bevy = { workspace = true, optional = true }
+
+[features]
+bevy_support = ["dep:bevy"]
