@@ -275,7 +275,7 @@ impl GameClient {
             .as_secs_f64();
 
         self.round_trip_time = (t4 - t1) - (t3 - t2);
-        self.clock_offset = (t2 - t1) + (self.round_trip_time / 2.0);
+        self.clock_offset = (t2 - t1) - (self.round_trip_time / 2.0);
     }
 
     pub fn get_render_state(&self) -> RenderState {
