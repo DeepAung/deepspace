@@ -162,8 +162,10 @@ impl GameClient {
                         }
                     };
 
-                    // println!("Got server packet: {:?}", packet);
-                    tx.send((packet, client_recv_time)).unwrap();
+                    if let Err(_) = tx.send((packet, client_recv_time)) {
+                        // Stop loop if channel is disconnected
+                        break;
+                    }
                 }
                 Err(e) => {
                     if matches!(e.kind(), io::ErrorKind::WouldBlock) {
@@ -264,19 +266,19 @@ impl GameClient {
     ) {
         let t1 = client_send_time
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("SystemTime must be before UNIX_EPOCH")
             .as_secs_f64();
         let t2 = server_recv_time
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("SystemTime must be before UNIX_EPOCH")
             .as_secs_f64();
         let t3 = server_send_time
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("SystemTime must be before UNIX_EPOCH")
             .as_secs_f64();
         let t4 = client_recv_time
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("SystemTime must be before UNIX_EPOCH")
             .as_secs_f64();
 
         self.round_trip_time_secs = (t4 - t1) - (t3 - t2);

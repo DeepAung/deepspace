@@ -180,7 +180,9 @@ fn try_connect(network_client: &mut NetworkClient, player_name: String) {
         return;
     }
 
-    network_client.connect(player_name).unwrap();
+    if let Err(e) = network_client.connect(player_name) {
+        eprintln!("failed to connect: {}", e);
+    }
 }
 
 fn check_connection_status(

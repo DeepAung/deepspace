@@ -16,13 +16,18 @@ impl Plugin for NetworkPlugin {
     fn build(&self, app: &mut App) {
         let server_addr: SocketAddr = "127.0.0.1:8080".parse().expect("Invalid address");
 
-        let client_socket = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
+        let client_socket =
+            Arc::new(UdpSocket::bind("0.0.0.0:0").expect("fail to create UDP socket"));
+
         client_socket
             .set_nonblocking(true)
             .expect("Cannot set UDP socket as non-blocking");
+
         println!(
             "UDP client bound to: {}",
-            client_socket.local_addr().unwrap()
+            client_socket
+                .local_addr()
+                .expect("cannot get UDP socket address")
         );
 
         let (tx, rx) = bounded::<(ServerPacket, SystemTime)>(1);

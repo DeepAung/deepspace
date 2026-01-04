@@ -1,11 +1,12 @@
-// TODO: remove all unwraps
-
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
     ops::{Add, Mul, Sub},
     time::{Duration, Instant, SystemTime},
 };
+
+// ===== Error Messages ===== //
+pub const BINCODE_ENCODE_FAILED: &'static str = "failed to encode to bincode";
 
 // ===== Default Constants ===== //
 pub const TICK_RATE: u32 = 60; // Server simulation rate (Hz)
@@ -415,8 +416,15 @@ impl LagCompensator {
         let prev = &self.snapshots[idx - 1];
         let next = &self.snapshots[idx];
 
-        let total_duration = next.time.duration_since(prev.time).unwrap().as_secs_f32();
-        let elapsed = target_time.duration_since(prev.time).unwrap().as_secs_f32();
+        let total_duration = next
+            .time
+            .duration_since(prev.time)
+            .expect("snapshots in buffer must be chronologically ordered")
+            .as_secs_f32();
+        let elapsed = target_time
+            .duration_since(prev.time)
+            .expect("target_time is earlier than prev snapshot time")
+            .as_secs_f32();
         let t = (elapsed / total_duration).clamp(0.0, 1.0);
 
         // Interpolate all positions

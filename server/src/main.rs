@@ -1,5 +1,9 @@
 use std::{io, sync::Arc, time::SystemTime};
-use tokio::{net::UdpSocket, sync::Mutex, time as tokiotime};
+use tokio::{
+    net::UdpSocket,
+    sync::Mutex,
+    time::{self as tokiotime},
+};
 
 use crate::game_server::GameServer;
 use shared::*;
@@ -35,10 +39,13 @@ async fn main() -> io::Result<()> {
             let packet = ServerPacket::Disconnect {
                 reason: "Client timed out".to_string(),
             };
-            let packet_encoded = bincode::serde::encode_to_vec(packet, bincode_cfg).unwrap();
+            let packet_encoded =
+                bincode::serde::encode_to_vec(packet, bincode_cfg).expect(BINCODE_ENCODE_FAILED);
 
             for addr in disconnected_clients {
-                game_socket.send_to(&packet_encoded, addr).await.unwrap();
+                if let Err(e) = game_socket.send_to(&packet_encoded, addr).await {
+                    eprintln!("failed to disconnect a player with address {}: {}", addr, e);
+                }
             }
         }
     });
@@ -60,8 +67,14 @@ async fn main() -> io::Result<()> {
             // Send snapshot to every client
             for (addr, snapshot) in snapshots {
                 let packet = ServerPacket::ViewSnapshot(snapshot);
-                let packet_encoded = bincode::serde::encode_to_vec(packet, bincode_cfg).unwrap();
-                write_socket.send_to(&packet_encoded, addr).await.unwrap();
+                let packet_encoded = bincode::serde::encode_to_vec(packet, bincode_cfg)
+                    .expect(BINCODE_ENCODE_FAILED);
+                if let Err(e) = write_socket.send_to(&packet_encoded, addr).await {
+                    eprintln!(
+                        "failed to send snapshot to a player with address {}: {}",
+                        addr, e
+                    );
+                }
             }
         }
     });
@@ -83,18 +96,21 @@ async fn main() -> io::Result<()> {
                         }
                     };
 
-                // println!("Receive client packet: {:?}", packet);
-
                 let mut game = game_state.lock().await;
 
                 match packet {
                     ClientPacket::Connect { player_name } => {
                         let packet = game.handle_connect(addr, player_name);
 
-                        let packet_encoded =
-                            bincode::serde::encode_to_vec(packet, bincode_cfg).unwrap();
+                        let packet_encoded = bincode::serde::encode_to_vec(packet, bincode_cfg)
+                            .expect(BINCODE_ENCODE_FAILED);
 
-                        socket.send_to(&packet_encoded, addr).await.unwrap();
+                        if let Err(e) = socket.send_to(&packet_encoded, addr).await {
+                            eprintln!(
+                                "failed to send packet to client with address {}: {}",
+                                addr, e
+                            );
+                        }
                     }
                     ClientPacket::Disconnect => {
                         game.handle_disconnect(addr);
@@ -102,10 +118,15 @@ async fn main() -> io::Result<()> {
                             reason: "Client request disconnect".to_string(),
                         };
 
-                        let packet_encoded =
-                            bincode::serde::encode_to_vec(packet, bincode_cfg).unwrap();
+                        let packet_encoded = bincode::serde::encode_to_vec(packet, bincode_cfg)
+                            .expect(BINCODE_ENCODE_FAILED);
 
-                        socket.send_to(&packet_encoded, addr).await.unwrap();
+                        if let Err(e) = socket.send_to(&packet_encoded, addr).await {
+                            eprintln!(
+                                "failed to send packet to client with address {}: {}",
+                                addr, e
+                            );
+                        }
                     }
                     ClientPacket::Input(client_input) => {
                         game.queue_input(addr, client_input);
@@ -114,10 +135,15 @@ async fn main() -> io::Result<()> {
                         let packet =
                             game.handle_time_sync(addr, client_send_time, server_recv_time);
 
-                        let packet_encoded =
-                            bincode::serde::encode_to_vec(packet, bincode_cfg).unwrap();
+                        let packet_encoded = bincode::serde::encode_to_vec(packet, bincode_cfg)
+                            .expect(BINCODE_ENCODE_FAILED);
 
-                        socket.send_to(&packet_encoded, addr).await.unwrap();
+                        if let Err(e) = socket.send_to(&packet_encoded, addr).await {
+                            eprintln!(
+                                "failed to send packet to client with address {}: {}",
+                                addr, e
+                            );
+                        }
                     }
                 }
             }
