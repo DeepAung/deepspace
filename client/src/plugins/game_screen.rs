@@ -339,37 +339,37 @@ fn handle_input(
 
     kb_input: Res<ButtonInput<KeyCode>>,
     mut has_pressed_shoot: ResMut<HasPressedShoot>,
-    window: Single<&Window, With<PrimaryWindow>>,
     mut last_rotation: Local<f32>,
+
+    window: Single<&Window, With<PrimaryWindow>>,
+    player_transform: Single<&Transform, (With<LocalPlayer>, Without<PrimaryWindow>)>,
+    camera_data: Single<
+        (&Camera, &GlobalTransform),
+        (With<Camera2d>, Without<LocalPlayer>, Without<PrimaryWindow>),
+    >,
 
     mut network_client: ResMut<NetworkClient>,
     mut local_player_interpolation: ResMut<LocalPlayerInterpolation>,
     time: Res<Time>,
 ) {
+    let Some(state) = &state.0 else {
+        return;
+    };
+
+    let Some(local_player) = &state.local_player else {
+        return;
+    };
+
     // Ignore input if player is dead
-    if let Some(state) = &state.0 {
-        if let Some(local_player) = &state.local_player {
-            if matches!(local_player.life, LifeState::Dead { respawn_time: _ }) {
-                return;
-            }
-        }
+    if matches!(local_player.life, LifeState::Dead { .. }) {
+        return;
     }
 
-    let rotation = match window.cursor_position() {
-        Some(mouse_position) => {
-            let center_position = Vec2::new(window.width() / 2.0, window.height() / 2.0);
+    let current_rotation =
+        calculate_aim_rotation(*window, *camera_data, player_transform.translation)
+            .unwrap_or(*last_rotation);
 
-            let mut direction = mouse_position - center_position;
-            direction.y = -direction.y; // Flip y axis so that Y increase when go upward
-
-            let angle = direction.to_angle();
-
-            *last_rotation = angle;
-
-            angle
-        }
-        None => *last_rotation,
-    };
+    *last_rotation = current_rotation;
 
     let shoot = has_pressed_shoot.0;
     has_pressed_shoot.0 = false;
@@ -382,7 +382,7 @@ fn handle_input(
         MoveDirection::None
     };
 
-    if let Err(e) = network_client.send_input(move_direction, rotation, shoot) {
+    if let Err(e) = network_client.send_input(move_direction, current_rotation, shoot) {
         error!("Failed to send input: {:?}", e);
     }
 
@@ -393,6 +393,25 @@ fn handle_input(
             time.elapsed_secs_f64(),
         );
     }
+}
+
+fn calculate_aim_rotation(
+    window: &Window,
+    camera_data: (&Camera, &GlobalTransform),
+    player_translation: Vec3,
+) -> Option<f32> {
+    let cursor_pos = window.cursor_position()?;
+    let (camera, camera_transform) = camera_data;
+
+    let player_screen_pos = camera
+        .world_to_viewport(camera_transform, player_translation)
+        .ok()?;
+
+    let mut direction = cursor_pos - player_screen_pos;
+
+    direction.y = -direction.y; // Flip y axis so that Y increase when go upward
+
+    Some(direction.to_angle())
 }
 
 fn update_render_state_resource(
