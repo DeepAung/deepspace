@@ -262,7 +262,6 @@ impl GameClient {
         server_send_time: SystemTime,
         client_recv_time: SystemTime,
     ) {
-        // TODO: update TimeSync and others to use TimeSecs instead of SystemTime
         let t1 = client_send_time
             .duration_since(UNIX_EPOCH)
             .unwrap()
