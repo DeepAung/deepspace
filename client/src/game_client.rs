@@ -281,7 +281,10 @@ impl GameClient {
             .expect("SystemTime must be before UNIX_EPOCH")
             .as_secs_f64();
 
-        self.round_trip_time_secs = (t4 - t1) - (t3 - t2);
+        // Due to non-monotonic nature of SystemTime, `(t4 - t1) - (t3 - t2)` could be a negative number
+        // So we guard against that
+        self.round_trip_time_secs = ((t4 - t1) - (t3 - t2)).max(0.0);
+
         self.clock_offset_secs = (t2 - t1) - (self.round_trip_time_secs / 2.0);
     }
 
