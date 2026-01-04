@@ -17,6 +17,9 @@ impl Plugin for NetworkPlugin {
         let server_addr: SocketAddr = "127.0.0.1:8080".parse().expect("Invalid address");
 
         let client_socket = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
+        client_socket
+            .set_nonblocking(true)
+            .expect("Cannot set UDP socket as non-blocking");
         println!(
             "UDP client bound to: {}",
             client_socket.local_addr().unwrap()

@@ -1,5 +1,6 @@
 use anyhow::bail;
 use crossbeam::channel::Sender;
+use std::io;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -159,6 +160,10 @@ impl GameClient {
                     tx.send((packet, client_recv_time)).unwrap();
                 }
                 Err(e) => {
+                    if matches!(e.kind(), io::ErrorKind::WouldBlock) {
+                        continue;
+                    }
+
                     eprintln!("Error receiving packet: {}", e);
                 }
             }
