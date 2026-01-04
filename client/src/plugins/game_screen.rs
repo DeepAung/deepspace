@@ -307,7 +307,13 @@ fn setup_game_screen(
     ));
 }
 
-fn teardown_game_screen(mut commands: Commands, query: Query<Entity, With<InGameObject>>) {
+fn teardown_game_screen(
+    mut commands: Commands,
+    mut camera: Single<&mut Transform, With<Camera2d>>,
+    query: Query<Entity, With<InGameObject>>,
+) {
+    camera.translation = Vec3::ZERO;
+
     for entity in query.iter() {
         commands.entity(entity).despawn();
     }
