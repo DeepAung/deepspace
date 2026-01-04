@@ -158,7 +158,7 @@ impl GameClient {
                         Ok((p, _)) => p,
                         Err(e) => {
                             eprintln!("Error decoding server packet: {}", e);
-                            return;
+                            continue;
                         }
                     };
 
