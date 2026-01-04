@@ -14,7 +14,9 @@ pub struct NetworkPlugin;
 
 impl Plugin for NetworkPlugin {
     fn build(&self, app: &mut App) {
-        let server_addr: SocketAddr = "127.0.0.1:8080".parse().expect("Invalid address");
+        let server_addr = std::env::var("SERVER_ADDR").unwrap_or("127.0.0.1:8080".to_string());
+
+        let server_addr: SocketAddr = server_addr.parse().expect("Invalid address");
 
         let client_socket =
             Arc::new(UdpSocket::bind("0.0.0.0:0").expect("fail to create UDP socket"));

@@ -10,12 +10,15 @@ use shared::*;
 
 mod game_server;
 
-const PORT: u16 = 8080;
-
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let socket = Arc::new(UdpSocket::bind(("0.0.0.0", PORT)).await?);
-    println!("Server listening on port {}", PORT);
+    let port = std::env::var("PORT")
+        .unwrap_or_default()
+        .parse::<u16>()
+        .unwrap_or(8080);
+
+    let socket = Arc::new(UdpSocket::bind(("0.0.0.0", port)).await?);
+    println!("Server listening on port {}", port);
 
     let game_state = Arc::new(Mutex::new(GameServer::new()));
     let bincode_cfg = bincode::config::standard();
