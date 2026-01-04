@@ -20,17 +20,21 @@ pub struct GameScreenPlugin;
 impl Plugin for GameScreenPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(Material2dPlugin::<GridBackgroundMaterial>::default())
+            .insert_resource(Time::<Fixed>::from_duration(TICK_DURATION))
             .insert_resource(RenderStateResource(None))
             .insert_resource(HasPressedShoot(false))
             .insert_resource(LocalPlayerInterpolation::default())
             .add_systems(OnEnter(GameState::InGame), setup_game_screen)
             .add_systems(OnExit(GameState::InGame), teardown_game_screen)
             .add_systems(
+                FixedUpdate,
+                handle_input.run_if(in_state(GameState::InGame)),
+            )
+            .add_systems(
                 Update,
                 (
                     exit_button_trigger,
                     capture_has_pressed_shoot,
-                    handle_input.run_if(on_timer(TICK_DURATION)),
                     update_render_state_resource,
                     render_local_player,
                     render_remote_players,
