@@ -7,6 +7,8 @@ This project serves as a practical implementation of an **authoritative server**
 > **Inspiration**
 > This project is heavily inspired by Gabriel Gambetta's excellent series on [Fast-Paced Multiplayer](https://gabrielgambetta.com/client-server-game-architecture.html).
 
+<img width="1920" height="1080" alt="Screenshot_20260319_220505" src="https://github.com/user-attachments/assets/ca944ee4-9f34-48d8-92cb-46b40fa4b4ad" />
+
 ## Key Features
 
 * **Authoritative Server**: The server controls the state of the game.
